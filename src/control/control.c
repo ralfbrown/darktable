@@ -133,6 +133,10 @@ static void dt_ctl_get_display_profile_colord_callback(GObject *source, GAsyncRe
           dt_print(DT_DEBUG_CONTROL,
                    "[color profile] colord gave us a new screen profile: '%s' (size: %ld)\n", filename, size);
         }
+        else
+        {
+          g_free(tmp_data);
+        }
       }
     }
   }
@@ -212,30 +216,38 @@ void dt_ctl_set_display_profile()
 #endif
 
 #elif defined GDK_WINDOWING_QUARTZ
-  GdkScreen *screen = gtk_widget_get_screen(widget);
-  if(screen == NULL) screen = gdk_screen_get_default();
-  int monitor = gdk_screen_get_monitor_at_window(screen, gtk_widget_get_window(widget));
-
-  CGDirectDisplayID ids[monitor + 1];
-  uint32_t total_ids;
-  CMProfileRef prof = NULL;
-  if(CGGetOnlineDisplayList(monitor + 1, &ids[0], &total_ids) == kCGErrorSuccess && total_ids == monitor + 1)
-    CMGetProfileByAVID(ids[monitor], &prof);
-  if(prof != NULL)
+  // disable automatic color management on OS X 10.10 since we end up applying a profile twice
+  // TODO: check if this issue applies to OS X 10.9, also re-check 10.8 and earlier versions
+#ifndef kCFCoreFoundationVersionNumber10_10
+#define kCFCoreFoundationVersionNumber10_10 1151.16
+#endif
+  if(kCFCoreFoundationVersionNumber < kCFCoreFoundationVersionNumber10_10)
   {
-    CFDataRef data;
-    data = CMProfileCopyICCData(NULL, prof);
-    CMCloseProfile(prof);
+    GdkScreen *screen = gtk_widget_get_screen(widget);
+    if(screen == NULL) screen = gdk_screen_get_default();
+    int monitor = gdk_screen_get_monitor_at_window(screen, gtk_widget_get_window(widget));
 
-    UInt8 *tmp_buffer = (UInt8 *)g_malloc(CFDataGetLength(data));
-    CFDataGetBytes(data, CFRangeMake(0, CFDataGetLength(data)), tmp_buffer);
+    CGDirectDisplayID ids[monitor + 1];
+    uint32_t total_ids;
+    CMProfileRef prof = NULL;
+    if(CGGetOnlineDisplayList(monitor + 1, &ids[0], &total_ids) == kCGErrorSuccess && total_ids == monitor + 1)
+      CMGetProfileByAVID(ids[monitor], &prof);
+    if(prof != NULL)
+    {
+      CFDataRef data;
+      data = CMProfileCopyICCData(NULL, prof);
+      CMCloseProfile(prof);
 
-    buffer = (guint8 *)tmp_buffer;
-    buffer_size = CFDataGetLength(data);
+      UInt8 *tmp_buffer = (UInt8 *)g_malloc(CFDataGetLength(data));
+      CFDataGetBytes(data, CFRangeMake(0, CFDataGetLength(data)), tmp_buffer);
 
-    CFRelease(data);
+      buffer = (guint8 *)tmp_buffer;
+      buffer_size = CFDataGetLength(data);
+
+      CFRelease(data);
+    }
+    profile_source = g_strdup("osx color profile api");
   }
-  profile_source = g_strdup("osx color profile api");
 #elif defined G_OS_WIN32
   (void)widget;
   HDC hdc = GetDC(NULL);
@@ -276,6 +288,10 @@ void dt_ctl_set_display_profile()
     }
     dt_print(DT_DEBUG_CONTROL, "[color profile] we got a new screen profile `%s' from the %s (size: %d)\n",
              *name ? name : "(unknown)", profile_source, buffer_size);
+  }
+  else
+  {
+    g_free(buffer);
   }
   pthread_rwlock_unlock(&darktable.control->xprofile_lock);
   if(profile_changed) dt_control_signal_raise(darktable.signals, DT_SIGNAL_CONTROL_PROFILE_CHANGED);
@@ -403,6 +419,7 @@ void dt_control_cleanup(dt_control_t *s)
   // vacuum TODO: optional?
   // DT_DEBUG_SQLITE3_EXEC(dt_database_get(darktable.db), "PRAGMA incremental_vacuum(0)", NULL, NULL, NULL);
   // DT_DEBUG_SQLITE3_EXEC(dt_database_get(darktable.db), "vacuum", NULL, NULL, NULL);
+  dt_control_jobs_cleanup(s);
   dt_pthread_mutex_destroy(&s->queue_mutex);
   dt_pthread_mutex_destroy(&s->cond_mutex);
   dt_pthread_mutex_destroy(&s->log_mutex);

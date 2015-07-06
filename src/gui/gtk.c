@@ -846,13 +846,13 @@ int dt_gui_gtk_init(dt_gui_gtk_t *gui, int argc, char *argv[])
   g_signal_connect(G_OBJECT(widget), "configure-event", G_CALLBACK(window_configure), NULL);
 
   // register keys for view switching
-  dt_accel_register_global(NC_("accel", "capture view"), GDK_KEY_t, 0);
+  dt_accel_register_global(NC_("accel", "tethering view"), GDK_KEY_t, 0);
   dt_accel_register_global(NC_("accel", "lighttable view"), GDK_KEY_l, 0);
   dt_accel_register_global(NC_("accel", "darkroom view"), GDK_KEY_d, 0);
   dt_accel_register_global(NC_("accel", "map view"), GDK_KEY_m, 0);
   dt_accel_register_global(NC_("accel", "slideshow view"), GDK_KEY_s, 0);
 
-  dt_accel_connect_global("capture view",
+  dt_accel_connect_global("tethering view",
                           g_cclosure_new(G_CALLBACK(_gui_switch_view_key_accel_callback),
                                          GINT_TO_POINTER(DT_GUI_VIEW_SWITCH_TO_TETHERING), NULL));
   dt_accel_connect_global("lighttable view",
@@ -1246,7 +1246,12 @@ void dt_ui_container_focus_widget(dt_ui_t *ui, const dt_ui_container_t c, GtkWid
   gtk_widget_queue_draw(ui->containers[c]);
 }
 
-void dt_ui_container_clear(struct dt_ui_t *ui, const dt_ui_container_t c)
+void dt_ui_container_foreach(struct dt_ui_t *ui, const dt_ui_container_t c, GtkCallback callback)
+{
+  g_return_if_fail(GTK_IS_CONTAINER(ui->containers[c]));
+  gtk_container_foreach(GTK_CONTAINER(ui->containers[c]), callback, (gpointer)ui->containers[c]);
+}
+void dt_ui_container_destroy_children(struct dt_ui_t *ui, const dt_ui_container_t c)
 {
   g_return_if_fail(GTK_IS_CONTAINER(ui->containers[c]));
   gtk_container_foreach(GTK_CONTAINER(ui->containers[c]), (GtkCallback)gtk_widget_destroy, (gpointer)c);
@@ -1369,6 +1374,12 @@ static GtkWidget *_ui_init_panel_container_top(GtkWidget *container)
   return w;
 }
 
+static gboolean _ui_init_panel_container_center_scroll_event(GtkWidget *widget, GdkEventScroll *event)
+{
+  // just make sure nothing happens:
+  return TRUE;
+}
+
 static GtkWidget *_ui_init_panel_container_center(GtkWidget *container, gboolean left)
 {
   GtkWidget *widget;
@@ -1391,6 +1402,15 @@ static GtkWidget *_ui_init_panel_container_center(GtkWidget *container, gboolean
   container = widget;
   widget = gtk_viewport_new(a[2], a[3]);
   gtk_viewport_set_shadow_type(GTK_VIEWPORT(widget), GTK_SHADOW_NONE);
+  gtk_container_add(GTK_CONTAINER(container), widget);
+
+  /* avoid scrolling with wheel, it's distracting (you'll end up over a control, and scroll it's value) */
+  container = widget;
+  widget = gtk_event_box_new();
+  gtk_widget_add_events(GTK_WIDGET(widget), GDK_SCROLL_MASK);
+  // gtk_widget_add_events(GTK_WIDGET(widget), GDK_SMOOTH_SCROLL_MASK);
+  g_signal_connect(G_OBJECT(widget), "scroll-event", G_CALLBACK(_ui_init_panel_container_center_scroll_event),
+                   NULL);
   gtk_container_add(GTK_CONTAINER(container), widget);
 
   /* create the container */

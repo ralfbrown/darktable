@@ -582,7 +582,20 @@ int dt_imageio_export_with_flags(const uint32_t imgid, const char *filename,
       return 1;
     }
 
-    //  Add each params
+    // remove everything above history_end
+    GList *history = g_list_nth(dev.history, dev.history_end);
+    while(history)
+    {
+      GList *next = g_list_next(history);
+      dt_dev_history_item_t *hist = (dt_dev_history_item_t *)(history->data);
+      free(hist->params);
+      free(hist->blend_params);
+      free(history->data);
+      dev.history = g_list_delete_link(dev.history, history);
+      history = next;
+    }
+
+    // Add each params
     while(stls)
     {
       dt_style_item_t *s = (dt_style_item_t *)stls->data;
@@ -850,12 +863,8 @@ int dt_imageio_export_with_flags(const uint32_t imgid, const char *filename,
 
   if(!thumbnail_export && strcmp(format->mime(format_params), "memory"))
   {
-    dt_imageio_module_data_t *format_copy = format->get_params(format);
-    memcpy(format_copy,format_params,format->params_size(format));
-    dt_imageio_module_data_t *storage_copy = storage->get_params(storage);
-    memcpy(storage_copy,storage_params,storage->params_size(storage));
     dt_control_signal_raise(darktable.signals, DT_SIGNAL_IMAGE_EXPORT_TMPFILE, imgid, filename, format,
-                            format_copy, storage, storage_copy);
+                            format_params, storage, storage_params);
   }
   return res;
 }

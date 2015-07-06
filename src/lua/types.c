@@ -423,8 +423,12 @@ static void int_tofunc(lua_State *L, luaA_Type type_id, void *cout, int index)
 
 static int gpointer_pushfunc(lua_State *L, luaA_Type type_id, const void *cin)
 {
-  luaL_getsubtable(L, LUA_REGISTRYINDEX, "dt_lua_gpointer_values");
   gpointer singleton = *(gpointer *)cin;
+  if(!singleton) {
+    lua_pushnil(L);
+    return 1;
+  }
+  luaL_getsubtable(L, LUA_REGISTRYINDEX, "dt_lua_gpointer_values");
   lua_pushlightuserdata(L, singleton);
   lua_gettable(L, -2);
   if(lua_isnoneornil(L, -1))
@@ -462,8 +466,12 @@ static void gpointer_tofunc(lua_State *L, luaA_Type type_id, void *cout, int ind
 
 static int unknown_pushfunc(lua_State *L, luaA_Type type_id, const void *cin)
 {
-  luaL_getsubtable(L, LUA_REGISTRYINDEX, "dt_lua_gpointer_values");
   gpointer singleton = *(gpointer *)cin;
+  if(!singleton) {
+    lua_pushnil(L);
+    return 1;
+  }
+  luaL_getsubtable(L, LUA_REGISTRYINDEX, "dt_lua_gpointer_values");
   lua_pushlightuserdata(L, singleton);
   lua_gettable(L, -2);
   if(lua_isnoneornil(L, -1))
@@ -707,6 +715,8 @@ luaA_Type dt_lua_init_singleton(lua_State *L, const char *unique_name, void *dat
   init_metatable(L, type_id);
 
   void **udata = lua_newuserdata(L, sizeof(void *));
+  lua_newtable(L);
+  lua_setuservalue(L, -2);
   if(!data)
   {
     memset(udata, 0, sizeof(void *));

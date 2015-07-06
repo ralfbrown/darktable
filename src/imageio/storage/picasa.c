@@ -187,8 +187,7 @@ static PicasaContext *picasa_api_init()
 static void picasa_api_destroy(PicasaContext *ctx)
 {
   if(ctx == NULL) return;
-  // FIXME: This is causing a segfault. Probably trying to dereference twice something already freed.
-  // curl_easy_cleanup(ctx->curl_ctx);
+  curl_easy_cleanup(ctx->curl_ctx);
   g_free(ctx->token);
   g_free(ctx->refresh_token);
   g_free(ctx->album_title);
@@ -839,7 +838,7 @@ static int picasa_get_user_auth_token(dt_storage_picasa_gui_data_t *ui)
 
   GtkWidget *entry = gtk_entry_new();
   GtkWidget *hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
-  gtk_box_pack_start(GTK_BOX(hbox), GTK_WIDGET(gtk_label_new(_("URL:"))), FALSE, FALSE, 0);
+  gtk_box_pack_start(GTK_BOX(hbox), GTK_WIDGET(gtk_label_new(_("verification code:"))), FALSE, FALSE, 0);
   gtk_box_pack_start(GTK_BOX(hbox), GTK_WIDGET(entry), TRUE, TRUE, 0);
 
   GtkWidget *picasaauthdialog_vbox
@@ -848,35 +847,33 @@ static int picasa_get_user_auth_token(dt_storage_picasa_gui_data_t *ui)
 
   gtk_widget_show_all(GTK_WIDGET(picasa_auth_dialog));
 
-  ////////////// wait for the user to enter the validation URL
+  ////////////// wait for the user to enter the verification code
   gint result;
   gchar *token = NULL;
-  const char *replyurl;
+  const char *replycode;
   while(TRUE)
   {
     result = gtk_dialog_run(GTK_DIALOG(picasa_auth_dialog));
     if(result == GTK_RESPONSE_CANCEL) break;
-    replyurl = gtk_entry_get_text(GTK_ENTRY(entry));
-    if(replyurl == NULL || g_strcmp0(replyurl, "") == 0)
+    replycode = gtk_entry_get_text(GTK_ENTRY(entry));
+    if(replycode == NULL || g_strcmp0(replycode, "") == 0)
     {
       gtk_message_dialog_format_secondary_markup(GTK_MESSAGE_DIALOG(picasa_auth_dialog),
                                                  "%s\n\n%s\n\n<span foreground=\"" MSGCOLOR_RED
                                                  "\" ><small>%s</small></span>",
-                                                 text1, text2, _("please enter the validation URL"));
+                                                 text1, text2, _("please enter the verification code"));
       continue;
     }
-    // token = picasa_extract_token_from_url(replyurl);
-    token = g_strdup(replyurl);
-    if(token != NULL) // we have a valid token
-      break;
     else
-      gtk_message_dialog_format_secondary_markup(
-          GTK_MESSAGE_DIALOG(picasa_auth_dialog),
-          "%s\n\n%s%s\n\n<span foreground=\"" MSGCOLOR_RED "\"><small>%s</small></span>", text1, text2,
-          _("the given URL is not valid, it should look like: "),
-          GOOGLE_WS_BASE_URL "connect/login_success.html?...");
+    {
+      token = g_strdup(replycode);
+      break;
+    }
   }
   gtk_widget_destroy(GTK_WIDGET(picasa_auth_dialog));
+
+  if(result == GTK_RESPONSE_CANCEL)
+    return 1;
 
   // Interchange now the authorization_code for an access_token and refresh_token
   JsonObject *reply;
@@ -885,6 +882,8 @@ static int picasa_get_user_auth_token(dt_storage_picasa_gui_data_t *ui)
   params = dt_util_dstrcat(params, "code=%s&client_id=" GOOGLE_API_KEY "&client_secret=" GOOGLE_API_SECRET
                                    "&redirect_uri=" GOOGLE_URI "&grant_type=authorization_code",
                            token);
+
+  g_free(token);
 
   reply = picasa_query_post_auth(ui->picasa_api, "o/oauth2/token", params);
 

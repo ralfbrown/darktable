@@ -47,14 +47,13 @@ DT_MODULE_INTROSPECTION(5, dt_iop_clipping_params_t)
 
 #define CLAMPF(a, mn, mx) ((a) < (mn) ? (mn) : ((a) > (mx) ? (mx) : (a)))
 
-// number of gui guides in combo box
-#define NUM_GUIDES 8
-
 /** flip H/V, rotate an image, then clip the buffer. */
 typedef enum dt_iop_clipping_flags_t
 {
-  FLAG_FLIP_HORIZONTAL = 1,
-  FLAG_FLIP_VERTICAL = 2
+  FLAG_FLIP_NONE = 0,
+  FLAG_FLIP_HORIZONTAL = 1<<0,
+  FLAG_FLIP_VERTICAL = 1<<1,
+  FLAG_FLIP_BOTH = FLAG_FLIP_HORIZONTAL|FLAG_FLIP_VERTICAL
 } dt_iop_clipping_flags_t;
 
 typedef struct dt_iop_clipping_aspect_t
@@ -65,14 +64,16 @@ typedef struct dt_iop_clipping_aspect_t
 
 typedef enum dt_iop_clipping_guide_t
 {
-  GUIDE_NONE = 0,
+  GUIDE_MIN = 0,
+  GUIDE_NONE = GUIDE_MIN,
   GUIDE_GRID,
   GUIDE_THIRD,
   GUIDE_METERING,
   GUIDE_PERSPECTIVE,
   GUIDE_DIAGONAL,
   GUIDE_TRIANGL,
-  GUIDE_GOLDEN
+  GUIDE_GOLDEN,
+  GUIDE_MAX
 } dt_iop_clipping_guide_t;
 
 typedef struct dt_iop_clipping_params_t
@@ -865,8 +866,8 @@ void process(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, void *
       {
         float pi[2], po[2];
 
-        pi[0] = roi_out->x - roi_out->scale * d->enlarge_x + roi_out->scale * d->cix + i;
-        pi[1] = roi_out->y - roi_out->scale * d->enlarge_y + roi_out->scale * d->ciy + j;
+        pi[0] = roi_out->x - roi_out->scale * d->enlarge_x + roi_out->scale * d->cix + i + 0.5f;
+        pi[1] = roi_out->y - roi_out->scale * d->enlarge_y + roi_out->scale * d->ciy + j + 0.5f;
 
         // transform this point using matrix m
         if(d->flip)
@@ -887,8 +888,8 @@ void process(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, void *
         po[0] += d->tx * roi_in->scale;
         po[1] += d->ty * roi_in->scale;
         if(d->k_apply == 1) keystone_backtransform(po, k_space, ma, mb, md, me, mg, mh, kxa, kya);
-        po[0] -= roi_in->x;
-        po[1] -= roi_in->y;
+        po[0] -= roi_in->x + 0.5f;
+        po[1] -= roi_in->y + 0.5f;
 
         dt_interpolation_compute_pixel4c(interpolation, (float *)ivoid, out, po[0], po[1], roi_in->width,
                                          roi_in->height, ch_width);
@@ -1737,10 +1738,8 @@ static void aspect_flip(GtkWidget *button, dt_iop_module_t *self)
   key_swap_callback(NULL, NULL, 0, 0, self);
 }
 
-static void guides_presets_changed(GtkWidget *combo, dt_iop_module_t *self)
+static void guides_presets_set_visibility(dt_iop_clipping_gui_data_t *g, int which)
 {
-  dt_iop_clipping_gui_data_t *g = (dt_iop_clipping_gui_data_t *)self->gui_data;
-  int which = dt_bauhaus_combobox_get(combo);
   if(which == GUIDE_TRIANGL || which == GUIDE_GOLDEN)
     gtk_widget_set_visible(g->flip_guides, TRUE);
   else
@@ -1751,6 +1750,14 @@ static void guides_presets_changed(GtkWidget *combo, dt_iop_module_t *self)
   else
     gtk_widget_set_visible(g->golden_extras, FALSE);
 
+}
+
+static void guides_presets_changed(GtkWidget *combo, dt_iop_module_t *self)
+{
+  dt_iop_clipping_gui_data_t *g = (dt_iop_clipping_gui_data_t *)self->gui_data;
+  int which = dt_bauhaus_combobox_get(combo);
+  guides_presets_set_visibility(g, which);
+
   // remember setting
   dt_conf_set_int("plugins/darkroom/clipping/guide", which);
 
@@ -1758,9 +1765,25 @@ static void guides_presets_changed(GtkWidget *combo, dt_iop_module_t *self)
   dt_control_queue_redraw_center();
 }
 
-static void guides_button_changed(GtkWidget *combo, dt_iop_module_t *self)
+static void guides_flip_changed(GtkWidget *combo, dt_iop_module_t *self)
 {
-  // redraw guides
+  int flip = dt_bauhaus_combobox_get(combo);
+
+  // remember setting
+  dt_conf_set_int("plugins/darkroom/clipping/flip_guides", flip);
+
+  dt_iop_request_focus(self);
+  dt_control_queue_redraw_center();
+}
+
+static void guides_golden_extras_changed(GtkWidget *combo, dt_iop_module_t *self)
+{
+  int golden_extra = dt_bauhaus_combobox_get(combo);
+
+  // remember setting
+  dt_conf_set_int("plugins/darkroom/clipping/golden_extras", golden_extra);
+
+  dt_iop_request_focus(self);
   dt_control_queue_redraw_center();
 }
 
@@ -1789,13 +1812,25 @@ static gint _aspect_ratio_cmp(const dt_iop_clipping_aspect_t *a, const dt_iop_cl
   const float aratio = (float)ad / (float)an;
   const float bratio = (float)bd / (float)bn;
 
-  if(aratio > bratio) return -1;
+  if(aratio < bratio) return -1;
 
   float prec = 0.0003f;
   if(fabsf(aratio - bratio) < prec) return 0;
 
   return 1;
 }
+
+
+static gchar *format_aspect(gchar *original, int adim, int bdim)
+{
+  // Special ratios:  freehand, original image
+  if ( bdim == 0 ) {
+    return g_strdup(original);
+  }
+
+  return g_strdup_printf("%s  %4.2f", original, ((float)adim / (float)bdim));
+}
+
 
 void gui_init(struct dt_iop_module_t *self)
 {
@@ -1861,25 +1896,33 @@ void gui_init(struct dt_iop_module_t *self)
   g_signal_connect(G_OBJECT(g->crop_auto), "value-changed", G_CALLBACK(crop_auto_changed), self);
   gtk_box_pack_start(GTK_BOX(self->widget), g->crop_auto, TRUE, TRUE, 0);
 
-  dt_iop_clipping_aspect_t aspects[] = { { _("free"), 0, 0 },
-                                         { _("image"), 1, 0 },
-                                         { _("golden cut"), 16180340, 10000000 },
-                                         { _("1:2"), 1, 2 },
-                                         { _("3:2"), 3, 2 },
-                                         { _("7:5"), 7, 5 },
-                                         { _("4:3"), 4, 3 },
-                                         { _("5:4"), 5, 4 },
+  dt_iop_clipping_aspect_t aspects[] = { { _("freehand"), 0, 0 },
+                                         { _("original image"), 1, 0 },
                                          { _("square"), 1, 1 },
-                                         { _("DIN"), 14142136, 10000000 },
-                                         { _("16:9"), 16, 9 },
-                                         { _("16:10"), 16, 10 },
-                                         { _("10:8 in print"), 2445, 2032 } };
+                                         { _("10:8 in print"), 2445, 2032 },
+                                         { _("5:4, 4x5, 8x10"), 5, 4 },
+                                         { _("11x14"), 14, 11 },
+                                         { _("8.5x11, letter"), 110, 85 },
+                                         { _("4:3, VGA, TV"), 4, 3 },
+                                         { _("5x7"), 7, 5 },
+                                         { _("ISO 216, DIN 476, A4"), 14142136, 10000000 },
+                                         { _("3:2, 4x6, 35mm"), 3, 2 },
+                                         { _("16:10, 8x5"), 16, 10 },
+                                         { _("golden cut"), 16180340, 10000000 },
+                                         { _("16:9, HDTV"), 16, 9 },
+                                         { _("widescreen"), 185, 100 },
+                                         { _("2:1, univisium"), 2, 1 },
+                                         { _("cinemascope"), 235, 100 },
+                                         { _("21:9"), 237, 100 },
+                                         { _("anamorphic"), 239, 100 },
+  };
+
   const int aspects_count = sizeof(aspects) / sizeof(dt_iop_clipping_aspect_t);
 
   for(int i = 0; i < aspects_count; i++)
   {
     dt_iop_clipping_aspect_t *aspect = g_malloc(sizeof(dt_iop_clipping_aspect_t));
-    aspect->name = g_strdup(aspects[i].name);
+    aspect->name = format_aspect(aspects[i].name, aspects[i].d, aspects[i].n);
     aspect->d = aspects[i].d;
     aspect->n = aspects[i].n;
     g->aspect_list = g_list_append(g->aspect_list, aspect);
@@ -1907,7 +1950,7 @@ void gui_init(struct dt_iop_module_t *self)
         continue;
       }
       dt_iop_clipping_aspect_t *aspect = g_malloc(sizeof(dt_iop_clipping_aspect_t));
-      aspect->name = g_strdup(nv->key);
+      aspect->name = format_aspect(nv->key, d, n);
       aspect->d = d;
       aspect->n = n;
       g->aspect_list = g_list_append(g->aspect_list, aspect);
@@ -1965,7 +2008,7 @@ void gui_init(struct dt_iop_module_t *self)
 
   g_signal_connect(G_OBJECT(g->aspect_presets), "value-changed", G_CALLBACK(aspect_presets_changed), self);
   g_object_set(G_OBJECT(g->aspect_presets), "tooltip-text",
-               _("set the aspect ratio\nthe list is sorted: from least square to the most square"),
+               _("set the aspect ratio\nthe list is sorted: from most square to least square"),
                (char *)NULL);
   dt_bauhaus_widget_set_quad_paint(g->aspect_presets, dtgtk_cairo_paint_aspectflip, 0);
   g_signal_connect(G_OBJECT(g->aspect_presets), "quad-pressed", G_CALLBACK(aspect_flip), self);
@@ -1985,7 +2028,7 @@ void gui_init(struct dt_iop_module_t *self)
   dt_bauhaus_combobox_add(g->guide_lines, _("golden mean"));
 
   int guide = dt_conf_get_int("plugins/darkroom/clipping/guide");
-  if(guide < 0 || guide >= NUM_GUIDES) guide = 0;
+  if(guide < GUIDE_MIN || guide >= GUIDE_MAX) guide = GUIDE_MIN;
   dt_bauhaus_combobox_set(g->guide_lines, guide);
 
   g_object_set(G_OBJECT(g->guide_lines), "tooltip-text",
@@ -2000,8 +2043,12 @@ void gui_init(struct dt_iop_module_t *self)
   dt_bauhaus_combobox_add(g->flip_guides, _("vertically"));
   dt_bauhaus_combobox_add(g->flip_guides, _("both"));
   g_object_set(G_OBJECT(g->flip_guides), "tooltip-text", _("flip guides"), (char *)NULL);
-  g_signal_connect(G_OBJECT(g->flip_guides), "value-changed", G_CALLBACK(guides_button_changed), self);
+  g_signal_connect(G_OBJECT(g->flip_guides), "value-changed", G_CALLBACK(guides_flip_changed), self);
   gtk_box_pack_start(GTK_BOX(self->widget), g->flip_guides, TRUE, TRUE, 0);
+
+  int flip_guides = dt_conf_get_int("plugins/darkroom/clipping/flip_guides");
+  if(flip_guides < FLAG_FLIP_NONE || flip_guides >= FLAG_FLIP_BOTH) flip_guides = FLAG_FLIP_NONE;
+  dt_bauhaus_combobox_set(g->flip_guides, flip_guides);
 
   g->golden_extras = dt_bauhaus_combobox_new(self);
   dt_bauhaus_widget_set_label(g->golden_extras, NULL, _("extra"));
@@ -2010,13 +2057,16 @@ void gui_init(struct dt_iop_module_t *self)
   dt_bauhaus_combobox_add(g->golden_extras, _("golden spiral"));
   dt_bauhaus_combobox_add(g->golden_extras, _("all"));
   g_object_set(G_OBJECT(g->golden_extras), "tooltip-text", _("show some extra guides"), (char *)NULL);
-  g_signal_connect(G_OBJECT(g->golden_extras), "value-changed", G_CALLBACK(guides_button_changed), self);
+  g_signal_connect(G_OBJECT(g->golden_extras), "value-changed", G_CALLBACK(guides_golden_extras_changed), self);
   gtk_box_pack_start(GTK_BOX(self->widget), g->golden_extras, TRUE, TRUE, 0);
 
-  gtk_widget_set_visible(g->flip_guides, FALSE);
-  gtk_widget_set_visible(g->golden_extras, FALSE);
+  int golden_extras = dt_conf_get_int("plugins/darkroom/clipping/golden_extras");
+  if(golden_extras < 0 || golden_extras >= 4) golden_extras = 0;
+  dt_bauhaus_combobox_set(g->golden_extras, golden_extras);
+
   gtk_widget_set_no_show_all(g->flip_guides, TRUE);
   gtk_widget_set_no_show_all(g->golden_extras, TRUE);
+  guides_presets_set_visibility(g, guide);
 }
 
 static void free_aspect(gpointer data)
@@ -2230,9 +2280,9 @@ void gui_post_expose(struct dt_iop_module_t *self, cairo_t *cr, int32_t width, i
     cairo_translate(cr, ((right - left) / 2 + left), ((bottom - top) / 2 + top));
 
     // Flip horizontal.
-    if(guide_flip & 1) cairo_scale(cr, -1, 1);
+    if(guide_flip & FLAG_FLIP_HORIZONTAL) cairo_scale(cr, -1, 1);
     // Flip vertical.
-    if(guide_flip & 2) cairo_scale(cr, 1, -1);
+    if(guide_flip & FLAG_FLIP_VERTICAL) cairo_scale(cr, 1, -1);
 
     dt_guides_draw_harmonious_triangles(cr, left, top, right, bottom, dst);
     cairo_stroke(cr);
@@ -2247,9 +2297,9 @@ void gui_post_expose(struct dt_iop_module_t *self, cairo_t *cr, int32_t width, i
     cairo_translate(cr, ((right - left) / 2 + left), ((bottom - top) / 2 + top));
 
     // Flip horizontal.
-    if(guide_flip & 1) cairo_scale(cr, -1, 1);
+    if(guide_flip & FLAG_FLIP_HORIZONTAL) cairo_scale(cr, -1, 1);
     // Flip vertical.
-    if(guide_flip & 2) cairo_scale(cr, 1, -1);
+    if(guide_flip & FLAG_FLIP_VERTICAL) cairo_scale(cr, 1, -1);
 
     float w = cwidth;
     float h = cheight;

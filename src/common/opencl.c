@@ -549,6 +549,7 @@ finally:
         dt_control_log(_("due to a slow GPU hardware acceleration via opencl has been de-activated."));
       }
     }
+    g_free(oldchecksum);
   }
   if(locale)
   {
@@ -592,6 +593,8 @@ void dt_opencl_cleanup(dt_opencl_t *cl)
         free(cl->dev[i].eventlist);
         free(cl->dev[i].eventtags);
       }
+      free((void *)(cl->dev[i].name));
+      free((void *)(cl->dev[i].cname));
     }
     free(cl->dev_priority_image);
     free(cl->dev_priority_preview);

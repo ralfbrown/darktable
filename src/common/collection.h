@@ -82,6 +82,7 @@ typedef enum dt_collection_properties_t
   DT_COLLECTION_PROP_PUBLISHER,
   DT_COLLECTION_PROP_RIGHTS,
   DT_COLLECTION_PROP_LENS,
+  DT_COLLECTION_PROP_FOCAL_LENGTH,
   DT_COLLECTION_PROP_ISO,
   DT_COLLECTION_PROP_APERTURE,
   DT_COLLECTION_PROP_FILENAME,
@@ -137,6 +138,8 @@ const dt_collection_t *dt_collection_new(const dt_collection_t *clone);
 void dt_collection_free(const dt_collection_t *collection);
 /** fetch params for collection for storing. */
 const dt_collection_params_t *dt_collection_params(const dt_collection_t *collection);
+/** get the filtered map between sanitized makermodel and exif maker/model **/
+void dt_collection_get_makermodel(const gchar *filter, GList **sanitized, GList **exif);
 /** get the generated query for collection */
 const gchar *dt_collection_get_query(const dt_collection_t *collection);
 /** updates sql query for a collection. @return 1 if query changed. */

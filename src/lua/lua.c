@@ -22,7 +22,12 @@
 
 void dt_lua_debug_stack_internal(lua_State *L, const char *function, int line)
 {
-  printf("lua stack at %s:%d (total %d)\n", function, line,lua_gettop(L));
+  printf("lua stack at %s:%d\n", function, line);
+  if(!L) 
+  {
+    printf("No stack\n");
+    return;
+  }
   for(int i = 1; i <= lua_gettop(L); i++)
   {
     printf("\t%d:%s %s\n", i, lua_typename(L, lua_type(L, i)), luaL_tolstring(L, i, NULL));
@@ -105,9 +110,8 @@ void dt_lua_unlock()
 
 static gboolean async_redraw(gpointer data)
 {
-    dt_control_signal_raise(darktable.signals, DT_SIGNAL_FILMROLLS_CHANGED); // just for good measure
-    dt_control_queue_redraw();
-    return false;
+  dt_control_queue_redraw();
+  return false;
 }
 
 void dt_lua_redraw_screen()

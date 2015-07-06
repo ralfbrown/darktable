@@ -99,7 +99,7 @@
 darktable_t darktable;
 const char dt_supported_extensions[] = "3fr,arw,bay,bmq,cap,cine,cr2,crw,cs1,dc2,dcr,dng,erf,fff,exr,ia,iiq,"
                                        "jpeg,jpg,k25,kc2,kdc,mdc,mef,mos,mrw,nef,nrw,orf,pef,pfm,pxn,qtk,raf,"
-                                       "raw,rdc,rw2,rwl,sr2,srf,srw,sti,tif,tiff,x3f,png"
+                                       "raw,rdc,rw2,rwl,sr2,srf,srw,sti,tif,tiff,x3f,png,ari"
 #ifdef HAVE_OPENJPEG
                                        ",j2c,j2k,jp2,jpc"
 #endif
@@ -735,8 +735,7 @@ int dt_init(int argc, char *argv[], const int init_gui, lua_State *L)
   g_slist_free_full(config_override, g_free);
 
   // set the interface language
-  const gchar *lang = dt_conf_get_string(
-      "ui_last/gui_language"); // we may not g_free 'lang' since it is owned by setlocale afterwards
+  const gchar *lang = dt_conf_get_string("ui_last/gui_language");
   if(lang != NULL && lang[0] != '\0')
   {
     setenv("LANGUAGE", lang, 1);
@@ -744,6 +743,7 @@ int dt_init(int argc, char *argv[], const int init_gui, lua_State *L)
     setlocale(LC_MESSAGES, lang);
     setenv("LANG", lang, 1);
   }
+  g_free((gchar *)lang);
 
   // initialize the database
   darktable.db = dt_database_init(dbfilename_from_command);
@@ -817,7 +817,6 @@ int dt_init(int argc, char *argv[], const int init_gui, lua_State *L)
   }
 
   // initialize collection query
-  darktable.collection_listeners = NULL;
   darktable.collection = dt_collection_new(NULL);
 
   /* initialize selection */
@@ -893,6 +892,8 @@ int dt_init(int argc, char *argv[], const int init_gui, lua_State *L)
 
   if(init_gui)
   {
+    // init the gui part of views
+    dt_view_manager_gui_init(darktable.view_manager);
     // Loading the keybindings
     char keyfile[PATH_MAX] = { 0 };
 
@@ -968,6 +969,10 @@ void dt_cleanup()
 {
   const int init_gui = (darktable.gui != NULL);
 
+#ifdef HAVE_PRINT
+  dt_printers_abort_discovery();
+#endif
+
 #ifdef USE_LUA
   dt_lua_finalize_early();
 #endif
@@ -1023,7 +1028,10 @@ void dt_cleanup()
 
   dt_database_destroy(darktable.db);
 
-  dt_bauhaus_cleanup();
+  if(init_gui)
+  {
+    dt_bauhaus_cleanup();
+  }
 
   dt_capabilities_cleanup();
 

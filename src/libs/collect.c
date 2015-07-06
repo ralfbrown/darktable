@@ -607,8 +607,7 @@ static int _count_images(const char *path)
   gchar query[1024] = {0};
   int count = 0;
 
-  gchar *escaped_text = NULL;
-  escaped_text = dt_util_str_replace(path, "'", "''");
+  char *escaped_text = sqlite3_mprintf("%q", path);
 
   snprintf (query, sizeof(query), "select count(id) from images where film_id in (select id from film_rolls where folder like '%s%%')", escaped_text);
   DT_DEBUG_SQLITE3_PREPARE_V2(dt_database_get(darktable.db), query, -1, &stmt, NULL);
@@ -616,7 +615,7 @@ static int _count_images(const char *path)
     count = sqlite3_column_int(stmt, 0);
   sqlite3_finalize(stmt);
 
-  g_free(escaped_text);
+  sqlite3_free(escaped_text);
 
   return count;
 #endif
@@ -1049,15 +1048,14 @@ static void tags_view(dt_lib_collect_rule_t *dr)
   set_properties(dr);
 
   /* query construction */
-  char query[1024] = { 0 };
   const gchar *text = NULL;
   text = gtk_entry_get_text(GTK_ENTRY(dr->text));
-  gchar *escaped_text = NULL;
-  escaped_text = dt_util_str_replace(text, "'", "''");
-  snprintf(query, sizeof(query),
-           "SELECT distinct name, id, name LIKE '%%%s%%' FROM tags ORDER BY UPPER(name) DESC", escaped_text);
-
-  DT_DEBUG_SQLITE3_PREPARE_V2(dt_database_get(darktable.db), query, -1, &stmt, NULL);
+  char search[1024] = { 0 };
+  snprintf(search, sizeof(search), "%%%s%%", text);
+  DT_DEBUG_SQLITE3_PREPARE_V2(dt_database_get(darktable.db),
+                              "SELECT distinct name, id, name LIKE ?1 "
+                              "FROM tags ORDER BY UPPER(name) DESC", -1, &stmt, NULL);
+  DT_DEBUG_SQLITE3_BIND_TEXT(stmt, 1, search, -1, SQLITE_STATIC);
 
   while(sqlite3_step(stmt) == SQLITE_ROW)
   {
@@ -1192,9 +1190,8 @@ static void list_view(dt_lib_collect_rule_t *dr)
   int property = gtk_combo_box_get_active(dr->combo);
   const gchar *text = NULL;
   text = gtk_entry_get_text(GTK_ENTRY(dr->text));
-  gchar *escaped_text = NULL;
 
-  escaped_text = dt_util_str_replace(text, "'", "''");
+  char *escaped_text = sqlite3_mprintf("%q", text);
 
   switch(property)
   {
@@ -1203,10 +1200,25 @@ static void list_view(dt_lib_collect_rule_t *dr)
                "select distinct folder, id from film_rolls where folder like '%%%s%%'  order by folder desc",
                escaped_text);
       break;
-    case DT_COLLECTION_PROP_CAMERA: // camera
-      snprintf(query, sizeof(query), "select distinct maker || ' ' || model as model, 1 from images where "
-                                     "maker || ' ' || model like '%%%s%%' order by model",
-               escaped_text);
+    case DT_COLLECTION_PROP_CAMERA: ;// camera
+      GList *makermodels = NULL;
+      dt_collection_get_makermodel(text, &makermodels, NULL);
+      GList *element = makermodels;
+      int index = 0;
+      while(element)
+      {
+        gchar *value = (gchar *) element->data;
+        gtk_list_store_append(GTK_LIST_STORE(listmodel), &iter);
+        gtk_list_store_set(GTK_LIST_STORE(listmodel), &iter,
+                           DT_LIB_COLLECT_COL_TEXT, value,
+                           DT_LIB_COLLECT_COL_ID, index,
+                           DT_LIB_COLLECT_COL_TOOLTIP, value,
+                           DT_LIB_COLLECT_COL_PATH, value, -1);
+        g_free(value);
+        index++;
+        element = element->next;
+      }
+      g_list_free(makermodels);
       break;
     case DT_COLLECTION_PROP_TAG: // tag
       snprintf(query, sizeof(query),
@@ -1288,6 +1300,30 @@ static void list_view(dt_lib_collect_rule_t *dr)
       snprintf(query, sizeof(query),
                "select distinct lens, 1 from images where lens like '%%%s%%' order by lens", escaped_text);
       break;
+
+    case DT_COLLECTION_PROP_FOCAL_LENGTH: // focal length
+    {
+      gchar *operator, *number;
+      dt_collection_split_operator_number(escaped_text, &number, &operator);
+
+      if(operator&& number)
+        snprintf(query, sizeof(query), "select distinct cast(focal_length as integer) as focal_length, 1 from images where "
+        "focal_length %s %s order by focal_length",
+        operator, number);
+      else if(number)
+        snprintf(query, sizeof(query), "select distinct cast(focal_length as integer) as focal_length, 1 from images where "
+        "focal_length = %s order by focal_length",
+        number);
+      else
+        snprintf(query, sizeof(query), "select distinct cast(focal_length as integer) as focal_length, 1 from images where "
+        "focal_length like '%%%s%%' order by focal_length",
+        escaped_text);
+
+      g_free(operator);
+      g_free(number);
+    }
+    break;
+
     case DT_COLLECTION_PROP_ISO: // iso
     {
       gchar *operator, *number;
@@ -1357,7 +1393,7 @@ static void list_view(dt_lib_collect_rule_t *dr)
                escaped_text);
       break;
   }
-  g_free(escaped_text);
+  sqlite3_free(escaped_text);
 
   DT_DEBUG_SQLITE3_PREPARE_V2(dt_database_get(darktable.db), query, -1, &stmt, NULL);
   while(sqlite3_step(stmt) == SQLITE_ROW)
@@ -2113,7 +2149,7 @@ void gui_cleanup(dt_lib_module_t *self)
   dt_control_signal_disconnect(darktable.signals, G_CALLBACK(filmrolls_imported), self);
   dt_control_signal_disconnect(darktable.signals, G_CALLBACK(filmrolls_removed), self);
   darktable.view_manager->proxy.module_collect.module = NULL;
-  g_free(((dt_lib_collect_t *)self->data)->params);
+  free(d->params);
 
   /* cleanup mem */
   // g_ptr_array_free(d->labels, TRUE);
@@ -2121,7 +2157,7 @@ void gui_cleanup(dt_lib_module_t *self)
 
   /* TODO: Make sure we are cleaning up all allocations */
 
-  g_free(self->data);
+  free(self->data);
   self->data = NULL;
 }
 
@@ -2131,7 +2167,6 @@ typedef dt_lib_collect_params_rule_t* dt_lua_lib_collect_params_rule_t;
 static int filter_cb(lua_State *L)
 {
   dt_lib_module_t *self = lua_touserdata(L, lua_upvalueindex(1));
-  dt_lua_lib_check_error(L,self);
   dt_lib_collect_params_t old_params;
   int size;
   
@@ -2290,6 +2325,7 @@ void init(struct dt_lib_module_t *self)
   luaA_enum_value(L,dt_collection_properties_t,DT_COLLECTION_PROP_PUBLISHER);
   luaA_enum_value(L,dt_collection_properties_t,DT_COLLECTION_PROP_RIGHTS);
   luaA_enum_value(L,dt_collection_properties_t,DT_COLLECTION_PROP_LENS);
+  luaA_enum_value(L,dt_collection_properties_t,DT_COLLECTION_PROP_FOCAL_LENGTH);
   luaA_enum_value(L,dt_collection_properties_t,DT_COLLECTION_PROP_ISO);
   luaA_enum_value(L,dt_collection_properties_t,DT_COLLECTION_PROP_APERTURE);
   luaA_enum_value(L,dt_collection_properties_t,DT_COLLECTION_PROP_FILENAME);

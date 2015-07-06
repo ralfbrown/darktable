@@ -51,7 +51,9 @@ static void releasereadimage(lua_State *L, const dt_image_t *image)
 
 static dt_image_t *checkwriteimage(lua_State *L, int index)
 {
-  return dt_image_cache_get(darktable.image_cache, index, 'w');
+  dt_lua_image_t imgid;
+  luaA_to(L, dt_lua_image_t, &imgid, index);
+  return dt_image_cache_get(darktable.image_cache, imgid, 'w');
 }
 
 static void releasewriteimage(lua_State *L, dt_image_t *image)
@@ -565,6 +567,7 @@ int dt_lua_init_image(lua_State *L)
   luaA_struct_member(L, dt_image_t, height, const int32_t);
   luaA_struct_member(L, dt_image_t, longitude, protected_double); // set to NAN if value is not set
   luaA_struct_member(L, dt_image_t, latitude, protected_double); // set to NAN if value is not set
+  luaA_struct_member(L, dt_image_t, elevation, protected_double); // set to NAN if value is not set
 
   dt_lua_init_int_type(L, dt_lua_image_t);
 

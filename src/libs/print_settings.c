@@ -115,13 +115,13 @@ typedef struct dt_print_format_t
 
 static int bpp(dt_imageio_module_data_t *data)
 {
-  dt_print_format_t *d = (dt_print_format_t *)data;
+  const dt_print_format_t *d = (dt_print_format_t *)data;
   return d->bpp;
 }
 
 static int levels(dt_imageio_module_data_t *data)
 {
-  dt_print_format_t *d = (dt_print_format_t *)data;
+  const dt_print_format_t *d = (dt_print_format_t *)data;
   return IMAGEIO_RGB | (d->bpp == 8 ? IMAGEIO_INT8 : IMAGEIO_INT16);
 }
 
@@ -164,7 +164,7 @@ static int write_image(dt_imageio_module_data_t *data, const char *filename, con
 static void
 _print_button_clicked (GtkWidget *widget, gpointer user_data)
 {
-  dt_lib_module_t *self = (dt_lib_module_t *)user_data;
+  const dt_lib_module_t *self = (dt_lib_module_t *)user_data;
   dt_lib_print_settings_t *ps = (dt_lib_print_settings_t *)self->data;
 
   const int imgid = dt_view_filmstrip_get_activated_imgid(darktable.view_manager);
@@ -172,24 +172,20 @@ _print_button_clicked (GtkWidget *widget, gpointer user_data)
   if (imgid == -1)
   {
     dt_control_log(_("cannot print until a picture is selected"));
-    dt_control_queue_redraw();
     return;
   }
   if (strlen(ps->prt.printer.name) == 0 || ps->prt.printer.resolution == 0)
   {
     dt_control_log(_("cannot print until a printer is selected"));
-    dt_control_queue_redraw();
     return;
   }
   if (ps->prt.paper.width == 0 || ps->prt.paper.height == 0)
   {
     dt_control_log(_("cannot print until a paper is selected"));
-    dt_control_queue_redraw();
     return;
   }
 
   dt_control_log(_("prepare printing image %d on `%s'"), imgid, ps->prt.printer.name);
-  dt_control_queue_redraw();
 
   // user margin are already in the proper orientation landscape/portrait
   double width, height;
@@ -221,8 +217,8 @@ _print_button_clicked (GtkWidget *widget, gpointer user_data)
 
   // compute the needed size for picture for the given printer resolution
 
-  int max_width  = (pa_width  * ps->prt.printer.resolution);
-  int max_height = (pa_height * ps->prt.printer.resolution);
+  const int max_width  = (pa_width  * ps->prt.printer.resolution);
+  const int max_height = (pa_height * ps->prt.printer.resolution);
 
   dt_print(DT_DEBUG_PRINT, "[print] max image size %d x %d (at resolution %d)\n", max_width, max_height, ps->prt.printer.resolution);
 
@@ -301,7 +297,6 @@ _print_button_clicked (GtkWidget *widget, gpointer user_data)
     free(dat.ps->buf);
     dt_control_log("failed to create temporary pdf for printing");
     fprintf(stderr, "failed to create temporary pdf for printing\n");
-    dt_control_queue_redraw();
     return;
   }
   close(fd);
@@ -352,7 +347,7 @@ _print_button_clicked (GtkWidget *widget, gpointer user_data)
   dt_tag_attach(tagid, imgid);
 }
 
-static void _set_printer(dt_lib_module_t *self, const char *printer_name)
+static void _set_printer(const dt_lib_module_t *self, const char *printer_name)
 {
   dt_lib_print_settings_t *ps = (dt_lib_print_settings_t *)self->data;
   dt_printer_info_t *printer = dt_get_printer_info (printer_name);
@@ -360,6 +355,8 @@ static void _set_printer(dt_lib_module_t *self, const char *printer_name)
   if (!printer) return;
 
   memcpy(&ps->prt.printer, printer, sizeof(dt_printer_info_t));
+  free(printer);
+  printer = NULL;
 
   // if there is 0 hardware margins, set the user marging to 15mm
 
@@ -396,8 +393,7 @@ static void _set_printer(dt_lib_module_t *self, const char *printer_name)
 
   // then add papers for the given printer
 
-  if (ps->paper_list)
-    g_list_free_full(ps->paper_list, g_free);
+  if(ps->paper_list) g_list_free_full(ps->paper_list, free);
 
   ps->paper_list = dt_get_papers (printer_name);
   GList *papers = ps->paper_list;
@@ -406,7 +402,7 @@ static void _set_printer(dt_lib_module_t *self, const char *printer_name)
 
   while (papers)
   {
-    dt_paper_info_t *p = (dt_paper_info_t *)papers->data;
+    const dt_paper_info_t *p = (dt_paper_info_t *)papers->data;
     dt_bauhaus_combobox_add(ps->papers, p->common_name);
 
     if (ispaperset == FALSE && (!strcmp(default_paper, p->common_name) || default_paper[0] == '\0'))
@@ -419,7 +415,7 @@ static void _set_printer(dt_lib_module_t *self, const char *printer_name)
     papers = g_list_next (papers);
   }
 
-  dt_paper_info_t *paper = dt_get_paper(ps->paper_list, default_paper);
+  const dt_paper_info_t *paper = dt_get_paper(ps->paper_list, default_paper);
 
   if (paper)
     memcpy(&ps->prt.paper, paper, sizeof(dt_paper_info_t));
@@ -430,7 +426,7 @@ static void _set_printer(dt_lib_module_t *self, const char *printer_name)
 }
 
 static void
-_printer_changed (GtkWidget *combo, dt_lib_module_t *self)
+_printer_changed (GtkWidget *combo, const dt_lib_module_t *self)
 {
   const gchar *printer_name = dt_bauhaus_combobox_get_text(combo);
 
@@ -439,7 +435,7 @@ _printer_changed (GtkWidget *combo, dt_lib_module_t *self)
 }
 
 static void
-_paper_changed (GtkWidget *combo, dt_lib_module_t *self)
+_paper_changed (GtkWidget *combo, const dt_lib_module_t *self)
 {
   dt_lib_print_settings_t *ps = (dt_lib_print_settings_t *)self->data;
 
@@ -447,7 +443,7 @@ _paper_changed (GtkWidget *combo, dt_lib_module_t *self)
 
   if (!paper_name) return;
 
-  dt_paper_info_t *paper = dt_get_paper(ps->paper_list, paper_name);
+  const dt_paper_info_t *paper = dt_get_paper(ps->paper_list, paper_name);
 
   if (paper)
     memcpy(&ps->prt.paper, paper, sizeof(dt_paper_info_t));
@@ -472,7 +468,7 @@ _update_slider (dt_lib_print_settings_t *ps)
 
   // if widget are created, let's display the current image size
 
-  if (ps->width && ps->height && ps->info)
+  if (ps->image_id != -1 && ps->width && ps->height && ps->info)
   {
     int32_t px=0, py=0, pwidth=0, pheight=0;
     int32_t ax=0, ay=0, awidth=0, aheight=0;
@@ -624,7 +620,7 @@ static void
 _alignment_callback(GtkWidget *tb, gpointer user_data)
 {
   int index=-1;
-  dt_lib_module_t *self = (dt_lib_module_t *)user_data;
+  const dt_lib_module_t *self = (dt_lib_module_t *)user_data;
   dt_lib_print_settings_t *ps = (dt_lib_print_settings_t *)self->data;
 
   for(int i=0; i<9; i++)
@@ -666,10 +662,10 @@ _unit_changed (GtkWidget *combo, dt_lib_module_t *self)
   ps->unit = unit;
   dt_conf_set_int("plugins/print/print/unit", ps->unit);
 
-  double margin_top = ps->prt.page.margin_top;
-  double margin_left = ps->prt.page.margin_left;
-  double margin_right = ps->prt.page.margin_right;
-  double margin_bottom = ps->prt.page.margin_bottom;
+  const double margin_top = ps->prt.page.margin_top;
+  const double margin_left = ps->prt.page.margin_left;
+  const double margin_right = ps->prt.page.margin_right;
+  const double margin_bottom = ps->prt.page.margin_bottom;
 
   const int n_digits = (int)(1.0 / (units[ps->unit] * 10.0));
 
@@ -831,7 +827,7 @@ static void _set_orientation(dt_lib_print_settings_t *ps)
 
 static void _print_settings_filmstrip_activate_callback(gpointer instance,gpointer user_data)
 {
-  dt_lib_module_t *self = (dt_lib_module_t *)user_data;
+  const dt_lib_module_t *self = (dt_lib_module_t *)user_data;
   dt_lib_print_settings_t *ps = (dt_lib_print_settings_t *)self->data;
 
   ps->image_id = dt_view_filmstrip_get_activated_imgid(darktable.view_manager);
@@ -898,6 +894,29 @@ static GList* _get_profiles ()
   return list;
 }
 
+static void _new_printer_callback(dt_printer_info_t *printer, void *user_data)
+{
+  static int count = 0;
+  const dt_lib_module_t *self = (dt_lib_module_t *)user_data;
+  const dt_lib_print_settings_t *d = (dt_lib_print_settings_t*)self->data;
+
+  char *default_printer = dt_conf_get_string("plugins/print/print/printer");
+
+  g_signal_handlers_block_by_func(G_OBJECT(d->printers), G_CALLBACK(_printer_changed), NULL);
+
+  dt_bauhaus_combobox_add(d->printers, printer->name);
+
+  if (!strcmp(default_printer, printer->name) || default_printer[0]=='\0')
+  {
+    dt_bauhaus_combobox_set(d->printers, count);
+    _set_printer(self, printer->name);
+  }
+  count++;
+  g_free(default_printer);
+
+  g_signal_handlers_unblock_by_func(G_OBJECT(d->printers), G_CALLBACK(_printer_changed), NULL);
+}
+
 void
 gui_init (dt_lib_module_t *self)
 {
@@ -917,6 +936,9 @@ gui_init (dt_lib_module_t *self)
   d->iwidth = d->iheight = 0;
   d->unit = 0;
   d->width = d->height = NULL;
+  d->v_piccprofile = NULL;
+  d->v_iccprofile = NULL;
+  d->v_style = NULL;
 
   dt_init_print_info(&d->prt);
   dt_view_print_settings(darktable.view_manager, &d->prt);
@@ -964,37 +986,13 @@ gui_init (dt_lib_module_t *self)
   // create papers combo as filled when adding printers
   d->papers = dt_bauhaus_combobox_new(NULL);
 
-  GList *printers = dt_get_printers();
-  int np=0;
-  int printer_index = 0;
-  char printer_name[128] = { 0 };
-
   label = dt_ui_section_label_new(_("printer"));
   gtk_box_pack_start(GTK_BOX(self->widget), label, TRUE, TRUE, 0);
 
   d->printers = dt_bauhaus_combobox_new(NULL);
 
-  char *default_printer = dt_conf_get_string("plugins/print/print/printer");
-
-  // we need the printer details, so request them here
-  while (printers)
-  {
-    dt_printer_info_t *printer = (dt_printer_info_t *)printers->data;
-    dt_bauhaus_combobox_add(d->printers, printer->name);
-    if (!strcmp(default_printer, printer->name) || default_printer[0]=='\0')
-    {
-      // record the printer to set as we want to set this when the paper widget is realized
-      printer_index = np;
-      g_strlcpy(printer_name, printer->name, sizeof(printer_name));
-    }
-    printers = g_list_next (printers);
-    np++;
-  }
-
-  free(default_printer);
   gtk_box_pack_start(GTK_BOX(self->widget), d->printers, TRUE, TRUE, 0);
   g_signal_connect(G_OBJECT(d->printers), "value-changed", G_CALLBACK(_printer_changed), self);
-  g_list_free_full (printers, g_free);
 
   //  Add printer profile combo
 
@@ -1020,6 +1018,7 @@ gui_init (dt_lib_module_t *self)
       n++;
       if (strcmp(prof->filename,printer_profile)==0)
       {
+        if(d->v_piccprofile) g_free(d->v_piccprofile);
         d->v_piccprofile = g_strdup(printer_profile);
         combo_idx=n;
       }
@@ -1033,6 +1032,7 @@ gui_init (dt_lib_module_t *self)
   if (combo_idx == -1)
   {
     dt_conf_set_string("plugins/print/printer/iccprofile", "");
+    if(d->v_piccprofile) g_free(d->v_piccprofile);
     d->v_piccprofile = g_strdup("");
     combo_idx=0;
   }
@@ -1081,11 +1081,6 @@ gui_init (dt_lib_module_t *self)
 
   g_signal_connect(G_OBJECT(d->papers), "value-changed", G_CALLBACK(_paper_changed), self);
   gtk_box_pack_start(GTK_BOX(self->widget), GTK_WIDGET(d->papers), TRUE, TRUE, 0);
-
-  // now set recorded default/active printer
-
-  dt_bauhaus_combobox_set(d->printers, printer_index);
-  _set_printer(self, printer_name);
 
   //// portrait / landscape
 
@@ -1230,6 +1225,7 @@ gui_init (dt_lib_module_t *self)
     n++;
     if (strcmp(prof->filename, iccprofile)==0)
     {
+      if(d->v_iccprofile) g_free(d->v_iccprofile);
       d->v_iccprofile = g_strdup(iccprofile);
       combo_idx=n;
     }
@@ -1239,6 +1235,7 @@ gui_init (dt_lib_module_t *self)
   if (combo_idx == -1)
   {
     dt_conf_set_string("plugins/print/print/iccprofile", "image");
+    if(d->v_iccprofile) g_free(d->v_iccprofile);
     d->v_iccprofile = g_strdup("");
     combo_idx=0;
   }
@@ -1284,6 +1281,7 @@ gui_init (dt_lib_module_t *self)
     n++;
     if (strcmp(style->name,current_style)==0)
     {
+      if(d->v_style) g_free(d->v_style);
       d->v_style = g_strdup(current_style);
       combo_idx=n;
     }
@@ -1298,6 +1296,7 @@ gui_init (dt_lib_module_t *self)
   if (combo_idx == -1)
   {
     dt_conf_set_string("plugins/print/print/style", "");
+    if(d->v_style) g_free(d->v_style);
     d->v_style = g_strdup("");
     combo_idx=0;
   }
@@ -1336,6 +1335,10 @@ gui_init (dt_lib_module_t *self)
   g_signal_connect (G_OBJECT (button), "clicked",
                     G_CALLBACK (_print_button_clicked),
                     (gpointer)self);
+
+  // Let's start the printer discovery now
+
+  dt_printers_discovery(_new_printer_callback, self);
 }
 
 static gboolean _bauhaus_combobox_set_active_text(GtkWidget *cb, const gchar *text)
@@ -1398,7 +1401,7 @@ static const char *_get_profile(GList *profiles, const char *filename)
 
 int set_params(dt_lib_module_t *self, const void *params, int size)
 {
-  dt_lib_print_settings_t *ps = (dt_lib_print_settings_t *)self->data;
+  const dt_lib_print_settings_t *ps = (dt_lib_print_settings_t *)self->data;
 
   if(!params) return 1;
 
@@ -1592,7 +1595,12 @@ gui_cleanup (dt_lib_module_t *self)
                                self);
 
   g_list_free_full(ps->profiles, g_free);
-  g_list_free_full(ps->paper_list, g_free);
+  g_list_free_full(ps->paper_list, free);
+
+  g_free(ps->v_iccprofile);
+  g_free(ps->v_piccprofile);
+  g_free(ps->v_style);
+
   free(self->data);
   self->data = NULL;
 }

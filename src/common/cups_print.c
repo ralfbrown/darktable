@@ -28,6 +28,12 @@
 #include "cups_print.h"
 #include "control/jobs/control_jobs.h"
 
+typedef struct dt_prtctl_t
+{
+  void (*cb)(dt_printer_info_t *, void *);
+  void *user_data;
+} dt_prtctl_t;
+
 // initialize the pinfo structure
 void dt_init_print_info(dt_print_info_t *pinfo)
 {
@@ -101,39 +107,65 @@ dt_printer_info_t *dt_get_printer_info(const char *printer_name)
   return result;
 }
 
-gboolean is_printer_available(void)
+static int _dest_cb(void *user_data, unsigned flags, cups_dest_t *dest)
 {
-  cups_dest_t *dests;
-  const int num_dests = cupsGetDests(&dests);
-  cupsFreeDests(num_dests, dests);
-  return (gboolean) num_dests > 0;
+  const dt_prtctl_t *pctl = (dt_prtctl_t *)user_data;
+  const char *psvalue = cupsGetOption("printer-state", dest->num_options, dest->options);
+
+  // check that the printer is ready
+  if (psvalue!=NULL && strtol(psvalue, NULL, 10) < IPP_PRINTER_STOPPED)
+  {
+    dt_printer_info_t *pr = dt_get_printer_info(dest->name);
+    if (pctl->cb) pctl->cb(pr, pctl->user_data);
+    free(pr);
+  }
+  else
+    dt_print(DT_DEBUG_PRINT, "[print] skip printer %s as stopped\n", dest->name);
+
+  return 1;
 }
 
-GList *dt_get_printers(void)
+static int _cancel = 0;
+
+static int _detect_printers_callback(dt_job_t *job)
 {
+  dt_prtctl_t *pctl = dt_control_job_get_params(job);
+  int res;
+#if ((CUPS_VERSION_MAJOR == 1) && (CUPS_VERSION_MINOR >= 6)) || CUPS_VERSION_MAJOR > 1
+  res = cupsEnumDests(CUPS_MEDIA_FLAGS_DEFAULT, 30000, &_cancel, 0, 0, _dest_cb, pctl);
+#else
   cups_dest_t *dests;
-  int num_dests = cupsGetDests(&dests);
-  int k;
-  GList *result = NULL;
-
-  for (k=0; k<num_dests; k++)
+  const int num_dests = cupsGetDests(&dests);
+  for (int k=0; k<num_dests; k++)
   {
-    const cups_dest_t *dest = &dests[k];
-    const char *psvalue = cupsGetOption("printer-state", dest->num_options, dest->options);
-
-    // check that the printer is ready
-    if (strtol(psvalue, NULL, 10) < IPP_PRINTER_STOPPED)
-    {
-      dt_printer_info_t *pr = dt_get_printer_info(dest->name);
-      result = g_list_append(result,pr);
-    }
-    else
-      dt_print(DT_DEBUG_PRINT, "[print] skip printer %s as stopped\n", dest->name);
+    _dest_cb((void *)pctl, 0, &dests[k]);
   }
-
   cupsFreeDests(num_dests, dests);
+  res=1;
+#endif
+  g_free(pctl);
+  return !res;
+}
 
-  return result;
+void dt_printers_abort_discovery(void)
+{
+  _cancel = 1;
+}
+
+void dt_printers_discovery(void (*cb)(dt_printer_info_t *pr, void *user_data), void *user_data)
+{
+  dt_prtctl_t *prtctl = g_malloc0(sizeof(dt_prtctl_t));
+
+  prtctl->cb = cb;
+  prtctl->user_data = user_data;
+
+  // asynchronously checks for available printers
+  dt_job_t *job = dt_control_job_create(&_detect_printers_callback, "detect connected printers");
+  if(job)
+  {
+    dt_control_job_set_params(job, prtctl);
+    dt_control_add_job(darktable.control, DT_JOB_QUEUE_SYSTEM_BG, job);
+  }
 }
 
 static int paper_exists(GList *papers, const char *name)
@@ -144,7 +176,7 @@ static int paper_exists(GList *papers, const char *name)
   GList *p = papers;
   while (p)
   {
-    dt_paper_info_t *pi = (dt_paper_info_t*)p->data;
+    const dt_paper_info_t *pi = (dt_paper_info_t*)p->data;
     if (!strcmp(pi->name,name) || !strcmp(pi->common_name,name))
       return 1;
     p = g_list_next (p);
@@ -227,10 +259,15 @@ GList *dt_get_papers(const char *printer_name)
           }
         }
       }
+
+      cupsFreeDestInfo(info);
+      httpClose(hcon);
     }
     else
       dt_print(DT_DEBUG_PRINT, "[print] cannot connect to printer %s (cancel=%d)\n", printer_name, cancel);
   }
+
+  cupsFreeDests(num_dests, dests);
 #endif
 
   // check now PPD page sizes
@@ -287,6 +324,8 @@ void dt_print_file(const int32_t imgid, const char *filename, const dt_print_inf
       num_options = cupsAddOption(dest->options[j].name,
                                   dest->options[j].value,
                                   num_options, &options);
+
+  cupsFreeDests(num_dests, dests);
 
   // disable cm on CUPS, this is important as dt does the cm
 

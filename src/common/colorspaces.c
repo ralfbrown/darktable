@@ -92,12 +92,18 @@ static void mat3mul(float *dst, const float *const m1, const float *const m2)
 }
 
 static int dt_colorspaces_get_matrix_from_profile(cmsHPROFILE prof, float *matrix, float *lutr, float *lutg,
-                                                  float *lutb, const int lutsize, const int input)
+                                                  float *lutb, const int lutsize, const int input,
+                                                  const int intent)
 {
   // create an OpenCL processable matrix + tone curves from an cmsHPROFILE:
 
   // check this first:
   if(!cmsIsMatrixShaper(prof)) return 1;
+
+  // if this profile contains LUT, it might also contain swapped matrix,
+  // so the only right way to handle it is to let LCMS apply it.
+  const int UsedDirection = input ? LCMS_USED_AS_INPUT : LCMS_USED_AS_OUTPUT;
+  if(cmsIsCLUT(prof, intent, UsedDirection)) return 1;
 
   cmsToneCurve *red_curve = cmsReadTag(prof, cmsSigRedTRCTag);
   cmsToneCurve *green_curve = cmsReadTag(prof, cmsSigGreenTRCTag);
@@ -179,15 +185,15 @@ static int dt_colorspaces_get_matrix_from_profile(cmsHPROFILE prof, float *matri
 }
 
 int dt_colorspaces_get_matrix_from_input_profile(cmsHPROFILE prof, float *matrix, float *lutr, float *lutg,
-                                                 float *lutb, const int lutsize)
+                                                 float *lutb, const int lutsize, const int intent)
 {
-  return dt_colorspaces_get_matrix_from_profile(prof, matrix, lutr, lutg, lutb, lutsize, 1);
+  return dt_colorspaces_get_matrix_from_profile(prof, matrix, lutr, lutg, lutb, lutsize, 1, intent);
 }
 
 int dt_colorspaces_get_matrix_from_output_profile(cmsHPROFILE prof, float *matrix, float *lutr, float *lutg,
-                                                  float *lutb, const int lutsize)
+                                                  float *lutb, const int lutsize, const int intent)
 {
-  return dt_colorspaces_get_matrix_from_profile(prof, matrix, lutr, lutg, lutb, lutsize, 0);
+  return dt_colorspaces_get_matrix_from_profile(prof, matrix, lutr, lutg, lutb, lutsize, 0, intent);
 }
 
 cmsHPROFILE dt_colorspaces_create_lab_profile()
@@ -247,6 +253,8 @@ cmsHPROFILE dt_colorspaces_create_srgb_profile()
   cmsLinkTag(hsRGB, cmsSigGreenTRCTag, cmsSigRedTRCTag);
   cmsLinkTag(hsRGB, cmsSigBlueTRCTag, cmsSigRedTRCTag);
 
+  cmsFreeToneCurve(transferFunction);
+
   return hsRGB;
 }
 
@@ -300,8 +308,10 @@ cmsHPROFILE dt_colorspaces_create_adobergb_profile(void)
   cmsWriteTag(hAdobeRGB, cmsSigBlueColorantTag, (void *)&Colorants.Blue);
 
   cmsWriteTag(hAdobeRGB, cmsSigRedTRCTag, (void *)transferFunction);
-  cmsWriteTag(hAdobeRGB, cmsSigGreenTRCTag, (void *)transferFunction);
-  cmsWriteTag(hAdobeRGB, cmsSigBlueTRCTag, (void *)transferFunction);
+  cmsLinkTag(hAdobeRGB, cmsSigGreenTRCTag, cmsSigRedTRCTag);
+  cmsLinkTag(hAdobeRGB, cmsSigBlueTRCTag, cmsSigRedTRCTag);
+
+  cmsFreeToneCurve(transferFunction);
 
   return hAdobeRGB;
 }
@@ -672,8 +682,10 @@ cmsHPROFILE dt_colorspaces_create_linear_rec709_rgb_profile(void)
   cmsWriteTag(hRec709RGB, cmsSigBlueColorantTag, (void *)&Colorants.Blue);
 
   cmsWriteTag(hRec709RGB, cmsSigRedTRCTag, (void *)transferFunction);
-  cmsWriteTag(hRec709RGB, cmsSigGreenTRCTag, (void *)transferFunction);
-  cmsWriteTag(hRec709RGB, cmsSigBlueTRCTag, (void *)transferFunction);
+  cmsLinkTag(hRec709RGB, cmsSigGreenTRCTag, cmsSigRedTRCTag);
+  cmsLinkTag(hRec709RGB, cmsSigBlueTRCTag, cmsSigRedTRCTag);
+
+  cmsFreeToneCurve(transferFunction);
 
   return hRec709RGB;
 }
@@ -726,8 +738,10 @@ cmsHPROFILE dt_colorspaces_create_linear_rec2020_rgb_profile(void)
   cmsWriteTag(hRec2020RGB, cmsSigBlueColorantTag, (void *)&Colorants.Blue);
 
   cmsWriteTag(hRec2020RGB, cmsSigRedTRCTag, (void *)transferFunction);
-  cmsWriteTag(hRec2020RGB, cmsSigGreenTRCTag, (void *)transferFunction);
-  cmsWriteTag(hRec2020RGB, cmsSigBlueTRCTag, (void *)transferFunction);
+  cmsLinkTag(hRec2020RGB, cmsSigGreenTRCTag, cmsSigRedTRCTag);
+  cmsLinkTag(hRec2020RGB, cmsSigBlueTRCTag, cmsSigRedTRCTag);
+
+  cmsFreeToneCurve(transferFunction);
 
   return hRec2020RGB;
 }

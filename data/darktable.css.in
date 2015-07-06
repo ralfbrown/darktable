@@ -49,9 +49,21 @@ GtkAlignment
   border:0;
   padding:0;
 }
+#lib-plugin-ui GtkTreeView
+{
+  background-color: shade(@selected_bg_color, 0.8); /* 'transparent' doesn't work for those it seems */
+}
+#lib-plugin-ui GtkComboBoxText *
+{
+  background-color: shade(@selected_bg_color, 0.8); /* 'transparent' doesn't work for those it seems */
+}
+#lib-plugin-ui GtkComboBox *
+{
+  background-color: shade(@selected_bg_color, 0.8); /* 'transparent' doesn't work for those it seems */
+}
 /* bright background */
 #background_job_eventbox,
-#iop-plugin-ui *
+#iop-plugin-ui GtkComboBox *
 {
   padding:0;
   border:0;
@@ -89,6 +101,7 @@ GtkAlignment
   background-image: none;
 }
 #lib-plugin-ui .button:${GTK_CSS_CLASS},
+#iop-plugin-ui .button:${GTK_CSS_CLASS},
 .button:${GTK_CSS_CLASS}
 {
   border-style:none;
@@ -96,6 +109,7 @@ GtkAlignment
   background-color: shade(@selected_bg_color, 1.4);
 }
 #lib-plugin-ui .button:hover,
+#iop-plugin-ui .button:hover,
 .button:hover
 {
   border-style:none;
@@ -104,13 +118,6 @@ GtkAlignment
 #iop-plugin-ui .button,
 #iop-plugin-ui GtkButton {
   background-color: transparent;
-}
-#iop-plugin-ui GtkGrid {
-  background-color: transparent;
-}
-#iop-plugin-ui .button:hover,
-#iop-plugin-ui GtkButton:hover {
-  background-color: shade(@plugin_bg_color, 1.7);
 }
 #iop-plugin-ui GtkLabel,
 #iop-plugin-ui GtkLabel:hover,
@@ -131,7 +138,7 @@ GtkAlignment
   background-color: @plugin_bg_color;
 }
 #iop-plugin-ui:selected,
-#lib-plugin-ui
+#lib-plugin-ui:selected
 {
   border: 1px solid #111111;
   box-shadow: inset 0 0 2px #141414;
@@ -180,7 +187,7 @@ GtkTable {
 }
 
 #lib-modulelist * {
-  background-color: @bg_color;
+  background-color: transparent;
 }
 
 GtkFrame > GtkEventBox {
@@ -190,7 +197,7 @@ GtkFrame > GtkEventBox {
 }
 
 GtkFrame > GtkEventBox * {
-  background-color: @selected_bg_color;
+  background-color: transparent;
   color: @selected_fg_color;
 }
 
@@ -203,11 +210,13 @@ GtkFrame > GtkEventBox * {
 {
   background-color:shade(@selected_bg_color, 0.8);
 }
-#lib-plugin-ui row
+#lib-plugin-ui row,
+#iop-plugin-ui row
 {
   background-color:@selected_bg_color;
 }
-#lib-plugin-ui row:selected
+#lib-plugin-ui row:selected,
+#iop-plugin-ui row:selected
 {
   background-color:@bg_color;
 }
@@ -267,7 +276,8 @@ GtkFrame > GtkEventBox * {
 {
   background-color:@selected_bg_color;
 }
-#lib-plugin-ui row:selected
+#lib-plugin-ui row:selected,
+#iop-plugin-ui row:selected
 {
   background-color:@bg_color;
 }
@@ -402,14 +412,16 @@ GtkDialog *
   padding:0;
   margin:0;
   border:0;
-  background-color: transparent;
+  background-color: @selected_bg_color;
   background-image: none;
   border-color:  shade(@selected_bg_color, 1.2);
 }
 
-GtkDialog .button
+GtkDialog .button *
 {
   padding: 5px;
+  background-color: shade(@bg_color, 1.7);
+  border-color:  shade(@bg_color, 1.7);
 }
 
 GtkDialog .button:hover *
@@ -425,7 +437,12 @@ GtkDialog GtkEventBox *
 
 GtkDialog GtkTreeView *:selected
 {
-   background-color: @selected_bg_color;
+   background-color: shade(@selected_bg_color, 1.7);
+}
+
+GtkColorSwatch
+{
+    background-color: transparent;
 }
 
 /* preferences notebook */
@@ -459,4 +476,13 @@ GtkNotebook GtkMenuItem
 GtkNotebook GtkMenuItem:hover
 {
   background-color: shade(@selected_bg_color, 1.7);
+}
+
+/* empty space at top/bottom of sidepanels when scrolled */
+.undershoot.top,
+.undershoot.bottom,
+.undershoot.left,
+.undershoot.right
+{
+  background: none;
 }
