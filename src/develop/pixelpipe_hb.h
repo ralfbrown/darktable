@@ -125,8 +125,11 @@ typedef struct dt_dev_pixelpipe_t
   int output_imgid;
   // working?
   int processing;
-  // shutting down?
-  int shutdown;
+  // shutting down?  Needs to be volatile so that compiler doesn't optimize away memory accesses
+  //  (a fully theoretically-correct implementation would use an atomic variable for the cross-thread
+  //  communication, but we're just using it to send a signal that may not be checked for tens of
+  //  milliseconds anyway.)
+  volatile int shutdown;
   // opencl enabled for this pixelpipe?
   int opencl_enabled;
   // opencl error detected?

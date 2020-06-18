@@ -247,10 +247,12 @@ void dt_dev_pixelpipe_cleanup(dt_dev_pixelpipe_t *pipe)
 
 void dt_dev_pixelpipe_cleanup_nodes(dt_dev_pixelpipe_t *pipe)
 {
+  pipe->shutdown = 1; // tell pipe that it should shut itself down if currently running
+
   // FIXME: either this or all process() -> gdk mutices have to be changed!
   //        (this is a circular dependency on busy_mutex and the gdk mutex)
-  dt_pthread_mutex_lock(&pipe->busy_mutex);
-  pipe->shutdown = 1;
+  // [[does the above still apply?]]
+  dt_pthread_mutex_lock(&pipe->busy_mutex); // block until the pipe has shut down
   // destroy all nodes
   GList *nodes = pipe->nodes;
   while(nodes)
@@ -278,13 +280,15 @@ void dt_dev_pixelpipe_cleanup_nodes(dt_dev_pixelpipe_t *pipe)
   // and iop order
   g_list_free_full(pipe->iop_order_list, free);
   pipe->iop_order_list = NULL;
-  dt_pthread_mutex_unlock(&pipe->busy_mutex);
+  dt_pthread_mutex_unlock(&pipe->busy_mutex);	// safe for others to mess with the pipe now
 }
 
 void dt_dev_pixelpipe_create_nodes(dt_dev_pixelpipe_t *pipe, dt_develop_t *dev)
 {
-  dt_pthread_mutex_lock(&pipe->busy_mutex);
+  dt_pthread_mutex_lock(&pipe->busy_mutex); // block until pipe is idle
+  // clear any pending shutdown request
   pipe->shutdown = 0;
+  // check that the pipe was actually properly cleaned up after the last run
   g_assert(pipe->nodes == NULL);
   g_assert(pipe->iop == NULL);
   g_assert(pipe->iop_order_list == NULL);
@@ -322,7 +326,7 @@ void dt_dev_pixelpipe_create_nodes(dt_dev_pixelpipe_t *pipe, dt_develop_t *dev)
     pipe->nodes = g_list_append(pipe->nodes, piece);
     modules = g_list_next(modules);
   }
-  dt_pthread_mutex_unlock(&pipe->busy_mutex);
+  dt_pthread_mutex_unlock(&pipe->busy_mutex); // safe for others to use/mess with the pipe now
 }
 
 // helper
@@ -1134,10 +1138,10 @@ static int _transform_for_blend(dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *p
   return ret;
 }
 
-static int collect_histogram_on_CPU(dt_dev_pixelpipe_t *pipe, dt_develop_t *dev,
-                                    float *input, const dt_iop_roi_t *roi_in,
-                                    dt_iop_module_t *module, dt_dev_pixelpipe_iop_t *piece,
-                                    dt_pixelpipe_flow_t *pixelpipe_flow)
+static void collect_histogram_on_CPU(dt_dev_pixelpipe_t *pipe, dt_develop_t *dev,
+                                     float *input, const dt_iop_roi_t *roi_in,
+                                     dt_iop_module_t *module, dt_dev_pixelpipe_iop_t *piece,
+                                     dt_pixelpipe_flow_t *pixelpipe_flow)
 {
   // histogram collection for module
   if((dev->gui_attached || !(piece->request_histogram & DT_REQUEST_ONLY_IN_GUI))
@@ -1155,10 +1159,11 @@ static int collect_histogram_on_CPU(dt_dev_pixelpipe_t *pipe, dt_develop_t *dev,
       memcpy(module->histogram, piece->histogram, buf_size);
       module->histogram_stats = piece->histogram_stats;
       memcpy(module->histogram_max, piece->histogram_max, sizeof(piece->histogram_max));
-      return 1;
+      if(module->widget)
+        dt_control_queue_redraw_widget(module->widget);
     }
   }
-  return 0;
+  return;
 }
 
 static int pixelpipe_process_on_CPU(dt_dev_pixelpipe_t *pipe, dt_develop_t *dev,
@@ -1167,31 +1172,21 @@ static int pixelpipe_process_on_CPU(dt_dev_pixelpipe_t *pipe, dt_develop_t *dev,
                                     dt_iop_module_t *module, dt_dev_pixelpipe_iop_t *piece,
                                     dt_develop_tiling_t *tiling, dt_pixelpipe_flow_t *pixelpipe_flow)
 {
-  dt_pthread_mutex_lock(&pipe->busy_mutex);
   if(pipe->shutdown)
-  {
-    dt_pthread_mutex_unlock(&pipe->busy_mutex);
     return 1;
-  }
 
   // transform to module input colorspace
   dt_ioppr_transform_image_colorspace(module, input, input, roi_in->width, roi_in->height, input_format->cst,
                                       module->input_colorspace(module, pipe, piece), &input_format->cst,
                                       dt_ioppr_get_pipe_work_profile_info(pipe));
 
-  if (collect_histogram_on_CPU(pipe, dev, input, roi_in, module, piece, pixelpipe_flow))
-  {
-    dt_pthread_mutex_unlock(&pipe->busy_mutex);
-    if(module->widget)
-      dt_control_queue_redraw_widget(module->widget);
-    dt_pthread_mutex_lock(&pipe->busy_mutex);
-  }
+  if(pipe->shutdown)
+    return 1;
+
+  collect_histogram_on_CPU(pipe, dev, input, roi_in, module, piece, pixelpipe_flow);
 
   if(pipe->shutdown)
-  {
-    dt_pthread_mutex_unlock(&pipe->busy_mutex);
     return 1;
-  }
 
   const size_t in_bpp = dt_iop_buffer_dsc_to_bpp(input_format);
   const size_t bpp = dt_iop_buffer_dsc_to_bpp(*out_format);
@@ -1217,7 +1212,6 @@ static int pixelpipe_process_on_CPU(dt_dev_pixelpipe_t *pipe, dt_develop_t *dev,
 
   if(pipe->shutdown)
   {
-    dt_pthread_mutex_unlock(&pipe->busy_mutex);
     return 1;
   }
 
@@ -1233,16 +1227,11 @@ static int pixelpipe_process_on_CPU(dt_dev_pixelpipe_t *pipe, dt_develop_t *dev,
                      module->picked_output_color_min, module->picked_output_color_max,
                      pipe->dsc.cst, PIXELPIPE_PICKER_OUTPUT);
 
-    dt_pthread_mutex_unlock(&pipe->busy_mutex);
-
     dt_control_signal_raise(darktable.signals, DT_SIGNAL_CONTROL_PICKERDATA_READY, module, piece);
-
-    dt_pthread_mutex_lock(&pipe->busy_mutex);
   }
 
   if(pipe->shutdown)
   {
-    dt_pthread_mutex_unlock(&pipe->busy_mutex);
     return 1;
   }
 
@@ -1258,6 +1247,9 @@ static int pixelpipe_process_on_CPU(dt_dev_pixelpipe_t *pipe, dt_develop_t *dev,
                                         &pipe->dsc.cst, dt_ioppr_get_pipe_work_profile_info(pipe));
   }
 
+  if(pipe->shutdown)
+    return 1;
+
   /* process blending on CPU */
   dt_develop_blend_process(module, piece, input, *output, roi_in, roi_out);
   *pixelpipe_flow |= (PIXELPIPE_FLOW_BLENDED_ON_CPU);
@@ -1265,10 +1257,8 @@ static int pixelpipe_process_on_CPU(dt_dev_pixelpipe_t *pipe, dt_develop_t *dev,
 
   if(pipe->shutdown)
   {
-    dt_pthread_mutex_unlock(&pipe->busy_mutex);
     return 1;
   }
-  dt_pthread_mutex_unlock(&pipe->busy_mutex);
   return 0; //no errors
 }
 
@@ -1277,6 +1267,9 @@ static int dt_dev_pixelpipe_process_rec(dt_dev_pixelpipe_t *pipe, dt_develop_t *
                                         void **cl_mem_output, dt_iop_buffer_dsc_t **out_format,
                                         const dt_iop_roi_t *roi_out, GList *modules, GList *pieces, int pos)
 {
+  if (pipe->shutdown)
+    return 1;
+
   dt_iop_roi_t roi_in = *roi_out;
 
   char module_name[256] = { 0 };
@@ -1310,10 +1303,8 @@ static int dt_dev_pixelpipe_process_rec(dt_dev_pixelpipe_t *pipe, dt_develop_t *
   const size_t bufsize = (size_t)bpp * roi_out->width * roi_out->height;
 
   // 1) if cached buffer is still available, return data
-  dt_pthread_mutex_lock(&pipe->busy_mutex);
   if(pipe->shutdown)
   {
-    dt_pthread_mutex_unlock(&pipe->busy_mutex);
     return 1;
   }
   int cache_available = 0;
@@ -1331,13 +1322,10 @@ static int dt_dev_pixelpipe_process_rec(dt_dev_pixelpipe_t *pipe, dt_develop_t *
 
     (void)dt_dev_pixelpipe_cache_get(&(pipe->cache), hash, bufsize, output, out_format);
 
-    dt_pthread_mutex_unlock(&pipe->busy_mutex);
     if(!modules) return 0;
     // go to post-collect directly:
     goto post_process_collect_info;
   }
-  else
-    dt_pthread_mutex_unlock(&pipe->busy_mutex);
 
   // 2) if history changed or exit event, abort processing?
   // preview pipe: abort on all but zoom events (same buffer anyways)
@@ -1353,10 +1341,8 @@ static int dt_dev_pixelpipe_process_rec(dt_dev_pixelpipe_t *pipe, dt_develop_t *
   if(!modules)
   {
     // 3a) import input array with given scale and roi
-    dt_pthread_mutex_lock(&pipe->busy_mutex);
     if(pipe->shutdown)
     {
-      dt_pthread_mutex_unlock(&pipe->busy_mutex);
       return 1;
     }
     dt_times_t start;
@@ -1407,21 +1393,17 @@ static int dt_dev_pixelpipe_process_rec(dt_dev_pixelpipe_t *pipe, dt_develop_t *
     }
 
     dt_show_times_f(&start, "[dev_pixelpipe]", "initing base buffer [%s]", _pipe_type_to_str(pipe->type));
-    dt_pthread_mutex_unlock(&pipe->busy_mutex);
   }
   else
   {
     // 3b) recurse and obtain output array in &input
 
     // get region of interest which is needed in input
-    dt_pthread_mutex_lock(&pipe->busy_mutex);
     if(pipe->shutdown)
     {
-      dt_pthread_mutex_unlock(&pipe->busy_mutex);
       return 1;
     }
     module->modify_roi_in(module, piece, roi_out, &roi_in);
-    dt_pthread_mutex_unlock(&pipe->busy_mutex);
 
     // recurse to get actual data of input buffer
 
@@ -1448,10 +1430,8 @@ static int dt_dev_pixelpipe_process_rec(dt_dev_pixelpipe_t *pipe, dt_develop_t *
     const size_t out_bpp = dt_iop_buffer_dsc_to_bpp(*out_format);
 
     // reserve new cache line: output
-    dt_pthread_mutex_lock(&pipe->busy_mutex);
     if(pipe->shutdown)
     {
-      dt_pthread_mutex_unlock(&pipe->busy_mutex);
       return 1;
     }
 
@@ -1465,15 +1445,11 @@ static int dt_dev_pixelpipe_process_rec(dt_dev_pixelpipe_t *pipe, dt_develop_t *
     else
       (void)dt_dev_pixelpipe_cache_get(&(pipe->cache), hash, bufsize, output, out_format);
 
-    dt_pthread_mutex_unlock(&pipe->busy_mutex);
-
 // if(module) printf("reserving new buf in cache for module %s %s: %ld buf %p\n", module->op, pipe ==
 // dev->preview_pipe ? "[preview]" : "", hash, *output);
 
-    dt_pthread_mutex_lock(&pipe->busy_mutex);
     if(pipe->shutdown)
     {
-      dt_pthread_mutex_unlock(&pipe->busy_mutex);
       return 1;
     }
 
@@ -1519,7 +1495,6 @@ static int dt_dev_pixelpipe_process_rec(dt_dev_pixelpipe_t *pipe, dt_develop_t *
                    (size_t)in_bpp * roi_in.width);
 #endif
 
-      dt_pthread_mutex_unlock(&pipe->busy_mutex);
       return 0;
     }
 
@@ -1550,7 +1525,6 @@ static int dt_dev_pixelpipe_process_rec(dt_dev_pixelpipe_t *pipe, dt_develop_t *
 
     if(pipe->shutdown)
     {
-      dt_pthread_mutex_unlock(&pipe->busy_mutex);
       return 1;
     }
 
@@ -1626,7 +1600,6 @@ static int dt_dev_pixelpipe_process_rec(dt_dev_pixelpipe_t *pipe, dt_develop_t *
           if(pipe->shutdown)
           {
             dt_opencl_release_mem_object(cl_mem_input);
-            dt_pthread_mutex_unlock(&pipe->busy_mutex);
             return 1;
           }
 
@@ -1679,17 +1652,12 @@ static int dt_dev_pixelpipe_process_rec(dt_dev_pixelpipe_t *pipe, dt_develop_t *
               module->histogram_stats = piece->histogram_stats;
               memcpy(module->histogram_max, piece->histogram_max, sizeof(piece->histogram_max));
 
-              dt_pthread_mutex_unlock(&pipe->busy_mutex);
-
               if(module->widget) dt_control_queue_redraw_widget(module->widget);
-
-              dt_pthread_mutex_lock(&pipe->busy_mutex);
             }
           }
 
           if(pipe->shutdown)
           {
-            dt_pthread_mutex_unlock(&pipe->busy_mutex);
             return 1;
           }
 
@@ -1708,7 +1676,6 @@ static int dt_dev_pixelpipe_process_rec(dt_dev_pixelpipe_t *pipe, dt_develop_t *
           if(pipe->shutdown)
           {
             dt_opencl_release_mem_object(cl_mem_input);
-            dt_pthread_mutex_unlock(&pipe->busy_mutex);
             return 1;
           }
 
@@ -1729,16 +1696,11 @@ static int dt_dev_pixelpipe_process_rec(dt_dev_pixelpipe_t *pipe, dt_develop_t *
                                 module->picked_output_color, module->picked_output_color_min,
                                 module->picked_output_color_max, *output, outbufsize, pipe->dsc.cst, PIXELPIPE_PICKER_OUTPUT);
 
-            dt_pthread_mutex_unlock(&pipe->busy_mutex);
-
             dt_control_signal_raise(darktable.signals, DT_SIGNAL_CONTROL_PICKERDATA_READY, module, piece);
-
-            dt_pthread_mutex_lock(&pipe->busy_mutex);
           }
 
           if(pipe->shutdown)
           {
-            dt_pthread_mutex_unlock(&pipe->busy_mutex);
             return 1;
           }
 
@@ -1777,7 +1739,6 @@ static int dt_dev_pixelpipe_process_rec(dt_dev_pixelpipe_t *pipe, dt_develop_t *
           if(pipe->shutdown)
           {
             dt_opencl_release_mem_object(cl_mem_input);
-            dt_pthread_mutex_unlock(&pipe->busy_mutex);
             return 1;
           }
         }
@@ -1804,7 +1765,6 @@ static int dt_dev_pixelpipe_process_rec(dt_dev_pixelpipe_t *pipe, dt_develop_t *
                   err);
               dt_opencl_release_mem_object(cl_mem_input);
               pipe->opencl_error = 1;
-              dt_pthread_mutex_unlock(&pipe->busy_mutex);
               return 1;
             }
             else
@@ -1816,7 +1776,6 @@ static int dt_dev_pixelpipe_process_rec(dt_dev_pixelpipe_t *pipe, dt_develop_t *
 
           if(pipe->shutdown)
           {
-            dt_pthread_mutex_unlock(&pipe->busy_mutex);
             return 1;
           }
 
@@ -1831,18 +1790,19 @@ static int dt_dev_pixelpipe_process_rec(dt_dev_pixelpipe_t *pipe, dt_develop_t *
                                                 &input_format->cst, dt_ioppr_get_pipe_work_profile_info(pipe));
           }
 
-          // histogram collection for module
-          if (success_opencl && collect_histogram_on_CPU(pipe, dev, input, &roi_in, module, piece, &pixelpipe_flow))
+          if(pipe->shutdown)
           {
-            dt_pthread_mutex_unlock(&pipe->busy_mutex);
-            if(module->widget)
-              dt_control_queue_redraw_widget(module->widget);
-            dt_pthread_mutex_lock(&pipe->busy_mutex);
+            return 1;
+          }
+
+          // histogram collection for module
+          if (success_opencl)
+          {
+            collect_histogram_on_CPU(pipe, dev, input, &roi_in, module, piece, &pixelpipe_flow);
           }
 
           if(pipe->shutdown)
           {
-            dt_pthread_mutex_unlock(&pipe->busy_mutex);
             return 1;
           }
 
@@ -1860,7 +1820,6 @@ static int dt_dev_pixelpipe_process_rec(dt_dev_pixelpipe_t *pipe, dt_develop_t *
 
           if(pipe->shutdown)
           {
-            dt_pthread_mutex_unlock(&pipe->busy_mutex);
             return 1;
           }
 
@@ -1876,16 +1835,11 @@ static int dt_dev_pixelpipe_process_rec(dt_dev_pixelpipe_t *pipe, dt_develop_t *
                              module->picked_output_color_min, module->picked_output_color_max,
                              pipe->dsc.cst, PIXELPIPE_PICKER_OUTPUT);
 
-            dt_pthread_mutex_unlock(&pipe->busy_mutex);
-
             dt_control_signal_raise(darktable.signals, DT_SIGNAL_CONTROL_PICKERDATA_READY, module, piece);
-
-            dt_pthread_mutex_lock(&pipe->busy_mutex);
           }
 
           if(pipe->shutdown)
           {
-            dt_pthread_mutex_unlock(&pipe->busy_mutex);
             return 1;
           }
 
@@ -1904,6 +1858,11 @@ static int dt_dev_pixelpipe_process_rec(dt_dev_pixelpipe_t *pipe, dt_develop_t *
             }
           }
 
+          if(pipe->shutdown)
+          {
+            return 1;
+          }
+
           /* do process blending on cpu (this is anyhow fast enough) */
           if(success_opencl)
           {
@@ -1919,7 +1878,6 @@ static int dt_dev_pixelpipe_process_rec(dt_dev_pixelpipe_t *pipe, dt_develop_t *
 
           if(pipe->shutdown)
           {
-            dt_pthread_mutex_unlock(&pipe->busy_mutex);
             return 1;
           }
         }
@@ -1933,7 +1891,6 @@ static int dt_dev_pixelpipe_process_rec(dt_dev_pixelpipe_t *pipe, dt_develop_t *
         if(pipe->shutdown)
         {
           dt_opencl_release_mem_object(cl_mem_input);
-          dt_pthread_mutex_unlock(&pipe->busy_mutex);
           return 1;
         }
 
@@ -1985,7 +1942,6 @@ static int dt_dev_pixelpipe_process_rec(dt_dev_pixelpipe_t *pipe, dt_develop_t *
             if(pipe->shutdown)
             {
               dt_opencl_release_mem_object(cl_mem_input);
-              dt_pthread_mutex_unlock(&pipe->busy_mutex);
               return 1;
             }
           }
@@ -2030,7 +1986,6 @@ static int dt_dev_pixelpipe_process_rec(dt_dev_pixelpipe_t *pipe, dt_develop_t *
                   err);
               dt_opencl_release_mem_object(cl_mem_input);
               pipe->opencl_error = 1;
-              dt_pthread_mutex_unlock(&pipe->busy_mutex);
               return 1;
             }
             else
@@ -2041,16 +1996,13 @@ static int dt_dev_pixelpipe_process_rec(dt_dev_pixelpipe_t *pipe, dt_develop_t *
             dt_opencl_release_mem_object(cl_mem_input);
             valid_input_on_gpu_only = FALSE;
           }
-          dt_pthread_mutex_unlock(&pipe->busy_mutex);
-
-          if (pixelpipe_process_on_CPU(pipe, dev, input, input_format, &roi_in, output, out_format, roi_out, module, piece, &tiling, &pixelpipe_flow))
+          if (pixelpipe_process_on_CPU(pipe, dev, input, input_format, &roi_in, output, out_format, roi_out,
+                                       module, piece, &tiling, &pixelpipe_flow))
             return 1;
-          dt_pthread_mutex_lock(&pipe->busy_mutex);
         }
 
         if(pipe->shutdown)
         {
-          dt_pthread_mutex_unlock(&pipe->busy_mutex);
           return 1;
         }
       }
@@ -2080,7 +2032,6 @@ static int dt_dev_pixelpipe_process_rec(dt_dev_pixelpipe_t *pipe, dt_develop_t *
                 err);
             dt_opencl_release_mem_object(cl_mem_input);
             pipe->opencl_error = 1;
-            dt_pthread_mutex_unlock(&pipe->busy_mutex);
             return 1;
           }
           else
@@ -2092,10 +2043,9 @@ static int dt_dev_pixelpipe_process_rec(dt_dev_pixelpipe_t *pipe, dt_develop_t *
           valid_input_on_gpu_only = FALSE;
         }
 
-        dt_pthread_mutex_unlock(&pipe->busy_mutex);
-        if (pixelpipe_process_on_CPU(pipe, dev, input, input_format, &roi_in, output, out_format, roi_out, module, piece, &tiling, &pixelpipe_flow))
+        if (pixelpipe_process_on_CPU(pipe, dev, input, input_format, &roi_in, output, out_format, roi_out,
+                                     module, piece, &tiling, &pixelpipe_flow))
           return 1;
-        dt_pthread_mutex_lock(&pipe->busy_mutex);
       }
 
       /* input is still only on GPU? Let's invalidate CPU input buffer then */
@@ -2105,16 +2055,14 @@ static int dt_dev_pixelpipe_process_rec(dt_dev_pixelpipe_t *pipe, dt_develop_t *
     {
       /* opencl is not inited or not enabled or we got no resource/device -> everything runs on cpu */
 
-      dt_pthread_mutex_unlock(&pipe->busy_mutex);
-      if (pixelpipe_process_on_CPU(pipe, dev, input, input_format, &roi_in, output, out_format, roi_out, module, piece, &tiling, &pixelpipe_flow))
+      if (pixelpipe_process_on_CPU(pipe, dev, input, input_format, &roi_in, output, out_format, roi_out,
+                                   module, piece, &tiling, &pixelpipe_flow))
         return 1;
-      dt_pthread_mutex_unlock(&pipe->busy_mutex);
     }
 #else // HAVE_OPENCL
-    dt_pthread_mutex_unlock(&pipe->busy_mutex);
-    if (pixelpipe_process_on_CPU(pipe, dev, input, &roi_in, input_format, output, out_format, roi_out, module, piece, &tiling, &pixelpipe_flow))
+    if (pixelpipe_process_on_CPU(pipe, dev, input, &roi_in, input_format, output, out_format, roi_out,
+                                 module, piece, &tiling, &pixelpipe_flow))
       return 1;
-    dt_pthread_mutex_lock(&pipe->busy_mutex);
 #endif // HAVE_OPENCL
 
     char histogram_log[32] = "";
@@ -2146,7 +2094,6 @@ static int dt_dev_pixelpipe_process_rec(dt_dev_pixelpipe_t *pipe, dt_develop_t *
     // in case we get this buffer from the cache in the future, cache some stuff:
     **out_format = piece->dsc_out = pipe->dsc;
 
-    dt_pthread_mutex_unlock(&pipe->busy_mutex);
     if(module == darktable.develop->gui_module)
     {
       // give the input buffer to the currently focused plugin more weight.
@@ -2157,16 +2104,13 @@ static int dt_dev_pixelpipe_process_rec(dt_dev_pixelpipe_t *pipe, dt_develop_t *
     if(darktable.unmuted & DT_DEBUG_NAN)
 #endif
     {
-      dt_pthread_mutex_lock(&pipe->busy_mutex);
       if(pipe->shutdown)
       {
-        dt_pthread_mutex_unlock(&pipe->busy_mutex);
         return 1;
       }
 
       if(strcmp(module->op, "gamma") == 0)
       {
-        dt_pthread_mutex_unlock(&pipe->busy_mutex);
         goto post_process_collect_info;
       }
 
@@ -2238,16 +2182,12 @@ static int dt_dev_pixelpipe_process_rec(dt_dev_pixelpipe_t *pipe, dt_develop_t *
                 _pipe_type_to_str(pipe->type));
         g_free(module_label);
       }
-
-      dt_pthread_mutex_unlock(&pipe->busy_mutex);
     }
 
 post_process_collect_info:
 
-    dt_pthread_mutex_lock(&pipe->busy_mutex);
     if(pipe->shutdown)
     {
-      dt_pthread_mutex_unlock(&pipe->busy_mutex);
       return 1;
     }
     // Picking RGB for the live samples and converting to Lab
@@ -2256,6 +2196,10 @@ post_process_collect_info:
     {
       _pixelpipe_pick_live_samples((const float *const )input, &roi_in);
     }
+
+    if(pipe->shutdown)
+      return 1;
+
     // Picking RGB for primary colorpicker output and converting to Lab
     if(dev->gui_attached && pipe == dev->preview_pipe
        && (strcmp(module->op, "gamma") == 0) // only gamma provides meaningful RGB data
@@ -2265,18 +2209,12 @@ post_process_collect_info:
     {
       _pixelpipe_pick_primary_colorpicker(dev, (const float *const )input, &roi_in);
 
-      dt_pthread_mutex_unlock(&pipe->busy_mutex);
-
       if(module->widget) dt_control_queue_redraw_widget(module->widget);
     }
-    else
-      dt_pthread_mutex_unlock(&pipe->busy_mutex);
 
     // 4) final histogram:
-    dt_pthread_mutex_lock(&pipe->busy_mutex);
     if(pipe->shutdown)
     {
-      dt_pthread_mutex_unlock(&pipe->busy_mutex);
       return 1;
     }
     if(dev->gui_attached && !dev->gui_leaving && pipe == dev->preview_pipe && (strcmp(module->op, "gamma") == 0))
@@ -2302,6 +2240,9 @@ post_process_collect_info:
       else
         _pixelpipe_final_histogram(dev, (const float *const)input, &roi_in);
 
+      if(pipe->shutdown)
+        return 1;
+
       // this HAS to be done on the float input data, otherwise we get really ugly artifacts due to rounding
       // issues when putting colors into the bins.
       // FIXME: is above comment true now that waveform is scaled via Cairo?
@@ -2309,14 +2250,11 @@ post_process_collect_info:
       {
         _pixelpipe_final_histogram_waveform(dev, (const float *const )input, &roi_in);
       }
-
-      dt_pthread_mutex_unlock(&pipe->busy_mutex);
-    }
-    else
-    {
-      dt_pthread_mutex_unlock(&pipe->busy_mutex);
     }
   }
+
+  if(pipe->shutdown)
+    return 1;
 
   return 0;
 }
@@ -2374,12 +2312,10 @@ static int dt_dev_pixelpipe_process_rec_and_backcopy(dt_dev_pixelpipe_t *pipe, d
                                                      const dt_iop_roi_t *roi_out, GList *modules, GList *pieces,
                                                      int pos)
 {
-#ifdef HAVE_OPENCL
-  int ret
-      = dt_dev_pixelpipe_process_rec(pipe, dev, output, cl_mem_output, out_format, roi_out, modules, pieces, pos);
-
-  // copy back final opencl buffer (if any) to CPU
   dt_pthread_mutex_lock(&pipe->busy_mutex);
+  int ret = dt_dev_pixelpipe_process_rec(pipe, dev, output, cl_mem_output, out_format, roi_out, modules, pieces, pos);
+#ifdef HAVE_OPENCL
+  // copy back final opencl buffer (if any) to CPU
   if(ret)
   {
     dt_opencl_release_mem_object(*cl_mem_output);
@@ -2407,12 +2343,9 @@ static int dt_dev_pixelpipe_process_rec_and_backcopy(dt_dev_pixelpipe_t *pipe, d
       }
     }
   }
-  dt_pthread_mutex_unlock(&pipe->busy_mutex);
-
-  return ret;
-#else
-  return dt_dev_pixelpipe_process_rec(pipe, dev, output, cl_mem_output, out_format, roi_out, modules, pieces, pos);
 #endif
+  dt_pthread_mutex_unlock(&pipe->busy_mutex);
+  return ret;
 }
 
 
