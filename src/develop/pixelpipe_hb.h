@@ -18,6 +18,7 @@
 
 #pragma once
 
+#include "common/atomic.h"
 #include "common/image.h"
 #include "common/imageio.h"
 #include "common/iop_order.h"
@@ -125,11 +126,8 @@ typedef struct dt_dev_pixelpipe_t
   int output_imgid;
   // working?
   int processing;
-  // shutting down?  Needs to be volatile so that compiler doesn't optimize away memory accesses
-  //  (a fully theoretically-correct implementation would use an atomic variable for the cross-thread
-  //  communication, but we're just using it to send a signal that may not be checked for tens of
-  //  milliseconds anyway.)
-  volatile int shutdown;
+  // shutting down?
+  dt_atomic_int shutdown;
   // opencl enabled for this pixelpipe?
   int opencl_enabled;
   // opencl error detected?
