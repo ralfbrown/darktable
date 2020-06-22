@@ -681,6 +681,13 @@ void dt_iop_queue_history_update(dt_iop_module_t *module, gboolean extend_prior)
 /** cancel any previously-queued history update */
 void dt_iop_cancel_history_update(dt_iop_module_t *module);
 
+/** queue a refresh of the center (FULL), preview, or second-preview windows, rerunning the pixelpipe from */
+/** the given module */
+void dt_iop_refresh_center(dt_iop_module_t *module);
+void dt_iop_refresh_preview(dt_iop_module_t *module);
+void dt_iop_refresh_preview2(dt_iop_module_t *module);
+void dt_iop_refresh_all(dt_iop_module_t *module);
+
 // modelines: These editor modelines have been set for all relevant files by tools/update_modelines.sh
 // vim: shiftwidth=2 expandtab tabstop=2 cindent
 // kate: tab-indents: off; indent-width 2; replace-tabs on; indent-mode cstyle; remove-trailing-spaces modified;
