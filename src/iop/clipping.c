@@ -21,6 +21,7 @@
 #endif
 #include "bauhaus/bauhaus.h"
 #include "common/debug.h"
+#include "common/imagebuf.h"
 #include "common/interpolation.h"
 #include "common/math.h"
 #include "common/opencl.h"
@@ -572,18 +573,7 @@ void distort_mask(struct dt_iop_module_t *self, struct dt_dev_pixelpipe_iop_t *p
   // only crop, no rot fast and sharp path:
   if(!d->flags && d->angle == 0.0 && d->all_off && roi_in->width == roi_out->width && roi_in->height == roi_out->height)
   {
-#ifdef _OPENMP
-#pragma omp parallel for default(none) \
-    dt_omp_firstprivate(in, out, roi_out) \
-    shared(d) \
-    schedule(static)
-#endif
-    for(int j = 0; j < roi_out->height; j++)
-    {
-      const float *_in = in + (size_t)roi_out->width * j;
-      float *_out = out + (size_t)roi_out->width * j;
-      memcpy(_out, _in, sizeof(float) * roi_out->width);
-    }
+    dt_iop_image_copy_by_size(out, in, roi_out->width, roi_out->height, piece->colors);
   }
   else
   {
@@ -953,23 +943,7 @@ void process(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, const 
   if(!d->flags && d->angle == 0.0 && d->all_off && roi_in->width == roi_out->width
      && roi_in->height == roi_out->height)
   {
-#ifdef _OPENMP
-#pragma omp parallel for default(none) \
-    dt_omp_firstprivate(ch, ivoid, ovoid, roi_out) \
-    shared(d) \
-    schedule(static)
-#endif
-    for(int j = 0; j < roi_out->height; j++)
-    {
-      const float *in = ((float *)ivoid) + (size_t)ch * roi_out->width * j;
-      float *out = ((float *)ovoid) + (size_t)ch * roi_out->width * j;
-      for(int i = 0; i < roi_out->width; i++)
-      {
-        for(int c = 0; c < 4; c++) out[c] = in[c];
-        out += ch;
-        in += ch;
-      }
-    }
+    dt_iop_image_copy_by_size(ovoid, ivoid, roi_out->width, roi_out->height, ch);
   }
   else
   {
