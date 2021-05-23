@@ -54,6 +54,7 @@ typedef struct dt_lib_select_t
 {
   GtkWidget *select_all_button, *select_none_button, *select_invert_button, *select_film_roll_button,
       *select_untouched_button;
+  gboolean display_is_stale;
 } dt_lib_select_t;
 
 static void _update(dt_lib_module_t *self)
@@ -76,7 +77,17 @@ static void _update(dt_lib_module_t *self)
 
 static void _image_selection_changed_callback(gpointer instance, dt_lib_module_t *self)
 {
-  _update(self);
+  dt_lib_select_t *const d = (dt_lib_select_t*)self->data;
+  if (dt_lib_gui_get_expanded(self))
+  {
+    _update(self);
+    d->display_is_stale = FALSE;
+  }
+  else
+  {
+    fprintf(stderr,"** select: defer selection update **\n");
+    d->display_is_stale = TRUE;
+  }
 #ifdef USE_LUA
   dt_lua_async_call_alien(dt_lua_event_trigger_wrapper,
     0, NULL,NULL,
@@ -89,7 +100,26 @@ static void _collection_updated_callback(gpointer instance, dt_collection_change
                                          dt_collection_properties_t changed_property, gpointer imgs, int next,
                                          dt_lib_module_t *self)
 {
-  _update(self);
+  dt_lib_select_t *const d = (dt_lib_select_t*)self->data;
+  if (dt_lib_gui_get_expanded(self))
+  {
+    _update(self);
+    d->display_is_stale = FALSE;
+  }
+  else
+  {
+    d->display_is_stale = TRUE;
+  }
+}
+
+void on_expand(dt_lib_module_t *self)
+{
+  dt_lib_select_t *const d = (dt_lib_select_t*)self->data;
+  if(d->display_is_stale)
+  {
+    _update(self);
+    d->display_is_stale = FALSE;
+  }
 }
 
 static void button_clicked(GtkWidget *widget, gpointer user_data)

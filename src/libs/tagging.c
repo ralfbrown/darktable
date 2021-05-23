@@ -68,6 +68,7 @@ typedef struct dt_lib_tagging_t
     int expand_timeout, scroll_timeout, last_y;
     gboolean root, tag_source;
   } drag;
+  gboolean display_is_stale;
 } dt_lib_tagging_t;
 
 typedef struct dt_tag_op_t
@@ -570,7 +571,25 @@ static void _collection_updated_callback(gpointer instance, dt_collection_change
 {
   dt_lib_tagging_t *d = (dt_lib_tagging_t *)self->data;
   d->collection[0] = '\0';
-  _update_atdetach_buttons(self);
+  if(dt_lib_gui_get_expanded(self))
+  {
+    _update_atdetach_buttons(self);
+    d->display_is_stale = FALSE;
+  }
+  else
+  {
+    d->display_is_stale = TRUE;
+  }
+}
+
+void on_expand(dt_lib_module_t *self)
+{
+  dt_lib_tagging_t *const d = (dt_lib_tagging_t*)self->data;
+  if(d->display_is_stale)
+  {
+    _update_atdetach_buttons(self);
+    d->display_is_stale = FALSE;
+  }
 }
 
 static void _raise_signal_tag_changed(dt_lib_module_t *self)

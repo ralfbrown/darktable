@@ -71,6 +71,7 @@ typedef struct dt_lib_collect_t
   GtkTreeModel *treefilter;
   GtkTreeModel *listfilter;
 
+  gboolean display_is_stale;
   gboolean singleclick;
   struct dt_lib_collect_params_t *params;
 #ifdef _WIN32
@@ -2167,10 +2168,19 @@ static void _set_tooltip(dt_lib_collect_rule_t *d)
   g_free(tip);
 }
 
+void on_expand(dt_lib_module_t *self)
+{
+  dt_lib_collect_t *const d = (dt_lib_collect_t *)self->data;
+  if(d->display_is_stale)
+  {
+    update_view(d->rule + d->active_rule);
+  }
+  d->display_is_stale = FALSE;
+}
 
 static void _lib_collect_gui_update(dt_lib_module_t *self)
 {
-  dt_lib_collect_t *d = (dt_lib_collect_t *)self->data;
+  dt_lib_collect_t *const d = (dt_lib_collect_t *)self->data;
 
   // we check if something has changed since last call
   if(d->view_rule != -1) return;
@@ -2232,9 +2242,17 @@ static void _lib_collect_gui_update(dt_lib_module_t *self)
     _set_tooltip(d->rule + i);
   }
 
-  // update list of proposals
+  // update list of proposals if the module's contents are visible
   d->active_rule = active;
-  update_view(d->rule + d->active_rule);
+  if (dt_lib_gui_get_expanded(self))
+  {
+    update_view(d->rule + d->active_rule);
+    d->display_is_stale = FALSE;
+  }
+  else
+  {
+    d->display_is_stale = TRUE;
+  }
   --darktable.gui->reset;
 }
 

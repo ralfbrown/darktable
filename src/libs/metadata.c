@@ -54,6 +54,7 @@ typedef struct dt_lib_metadata_t
   gboolean editing;
   GtkWidget *apply_button;
   gboolean init_layout;
+  gboolean display_is_stale;
   GList *last_act_on;
 } dt_lib_metadata_t;
 
@@ -208,14 +209,42 @@ static void _update(dt_lib_module_t *self)
 
 static void _image_selection_changed_callback(gpointer instance, dt_lib_module_t *self)
 {
-  _update(self);
+  dt_lib_metadata_t *const d = (dt_lib_metadata_t*)self->data;
+  if (dt_lib_gui_get_expanded(self))
+  {
+    _update(self);
+    d->display_is_stale = FALSE;
+  }
+  else
+  {
+    d->display_is_stale = TRUE;
+  }
 }
 
 static void _collection_updated_callback(gpointer instance, dt_collection_change_t query_change,
                                          dt_collection_properties_t changed_property, gpointer imgs, int next,
                                          dt_lib_module_t *self)
 {
-  _update(self);
+  dt_lib_metadata_t *const d = (dt_lib_metadata_t*)self->data;
+  if (dt_lib_gui_get_expanded(self))
+  {
+    _update(self);
+    d->display_is_stale = FALSE;
+  }
+  else
+  {
+    d->display_is_stale = TRUE;
+  }
+}
+
+void on_expand(dt_lib_module_t *self)
+{
+  dt_lib_metadata_t *const d = (dt_lib_metadata_t*)self->data;
+  if(d->display_is_stale)
+  {
+    _update(self);
+    d->display_is_stale = FALSE;
+  }
 }
 
 static void _append_kv(GList **l, const gchar *key, const gchar *value)

@@ -810,6 +810,10 @@ void dt_lib_gui_set_expanded(dt_lib_module_t *module, gboolean expanded)
 
     if(dt_conf_get_bool("darkroom/ui/scroll_to_module"))
       darktable.gui->scroll_to[1] = module->expander;
+
+    /* announce that the module has been expanded */
+    if (DTGTK_IS_EXPANDER(module->expander) && module->on_expand)
+      module->on_expand(module);
   }
   else
   {
