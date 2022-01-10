@@ -2168,14 +2168,17 @@ static void _set_tooltip(dt_lib_collect_rule_t *d)
   g_free(tip);
 }
 
-void on_expand(dt_lib_module_t *self)
+static gboolean _draw_callback(GtkWidget *widget, gpointer cr, dt_lib_module_t *self)
 {
   dt_lib_collect_t *const d = (dt_lib_collect_t *)self->data;
   if(d->display_is_stale)
   {
     update_view(d->rule + d->active_rule);
+
+    d->display_is_stale = FALSE;
   }
-  d->display_is_stale = FALSE;
+
+  return FALSE;
 }
 
 static void _lib_collect_gui_update(dt_lib_module_t *self)
@@ -2244,15 +2247,9 @@ static void _lib_collect_gui_update(dt_lib_module_t *self)
 
   // update list of proposals if the module's contents are visible
   d->active_rule = active;
-  if (dt_lib_gui_get_expanded(self))
-  {
-    update_view(d->rule + d->active_rule);
-    d->display_is_stale = FALSE;
-  }
-  else
-  {
-    d->display_is_stale = TRUE;
-  }
+  d->display_is_stale = TRUE;
+  gtk_widget_queue_draw(self->widget);
+
   --darktable.gui->reset;
 }
 
@@ -3113,6 +3110,8 @@ void gui_init(dt_lib_module_t *self)
   DT_DEBUG_CONTROL_SIGNAL_CONNECT(darktable.signals, DT_SIGNAL_METADATA_CHANGED, G_CALLBACK(metadata_changed), self);
 
   DT_DEBUG_CONTROL_SIGNAL_CONNECT(darktable.signals, DT_SIGNAL_PREFERENCES_CHANGE, G_CALLBACK(view_set_click), self);
+
+  g_signal_connect(G_OBJECT(self->widget), "draw", G_CALLBACK(_draw_callback), self);
 }
 
 void gui_cleanup(dt_lib_module_t *self)

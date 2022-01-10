@@ -126,6 +126,7 @@ static void _update(dt_lib_module_t *self)
 {
   dt_lib_cancel_postponed_update(self);
   dt_lib_metadata_t *d = (dt_lib_metadata_t *)self->data;
+  d->display_is_stale = FALSE;
 
   GList *imgs = dt_act_on_get_images(FALSE, FALSE, FALSE);
 
@@ -210,41 +211,24 @@ static void _update(dt_lib_module_t *self)
 static void _image_selection_changed_callback(gpointer instance, dt_lib_module_t *self)
 {
   dt_lib_metadata_t *const d = (dt_lib_metadata_t*)self->data;
-  if (dt_lib_gui_get_expanded(self))
-  {
-    _update(self);
-    d->display_is_stale = FALSE;
-  }
-  else
-  {
-    d->display_is_stale = TRUE;
-  }
+  d->display_is_stale = TRUE;
+  gtk_widget_queue_draw(self->widget);
 }
 
 static void _collection_updated_callback(gpointer instance, dt_collection_change_t query_change,
                                          dt_collection_properties_t changed_property, gpointer imgs, int next,
                                          dt_lib_module_t *self)
 {
-  dt_lib_metadata_t *const d = (dt_lib_metadata_t*)self->data;
-  if (dt_lib_gui_get_expanded(self))
-  {
-    _update(self);
-    d->display_is_stale = FALSE;
-  }
-  else
-  {
-    d->display_is_stale = TRUE;
-  }
+  _image_selection_changed_callback(instance, self);
 }
 
-void on_expand(dt_lib_module_t *self)
+static gboolean _draw_callback(GtkWidget *widget, gpointer cr, dt_lib_module_t *self)
 {
   dt_lib_metadata_t *const d = (dt_lib_metadata_t*)self->data;
   if(d->display_is_stale)
-  {
     _update(self);
-    d->display_is_stale = FALSE;
-  }
+
+  return FALSE;
 }
 
 static void _append_kv(GList **l, const gchar *key, const gchar *value)
@@ -826,6 +810,8 @@ void gui_init(dt_lib_module_t *self)
                             G_CALLBACK(_collection_updated_callback), self);
   _update(self);
   _update_layout(self);
+
+  g_signal_connect(G_OBJECT(self->widget), "draw", G_CALLBACK(_draw_callback), self);
 }
 
 void gui_cleanup(dt_lib_module_t *self)
