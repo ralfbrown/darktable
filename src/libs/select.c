@@ -85,7 +85,6 @@ static void _image_selection_changed_callback(gpointer instance, dt_lib_module_t
   }
   else
   {
-    fprintf(stderr,"** select: defer selection update **\n");
     d->display_is_stale = TRUE;
   }
 #ifdef USE_LUA
