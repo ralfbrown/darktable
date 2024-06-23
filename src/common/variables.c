@@ -1346,6 +1346,7 @@ void dt_variables_set_upscale(dt_variables_params_t *params,
 void dt_variables_set_time(dt_variables_params_t *params,
                            const char *time)
 {
+  if(params->data->time) g_date_time_unref(params->data->time);
   params->data->time = dt_datetime_exif_to_gdatetime(time, darktable.utc_tz);
 }
 
