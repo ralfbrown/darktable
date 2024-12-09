@@ -116,6 +116,23 @@ static int display_image_cb(lua_State *L)
 
 #endif
 
+// helper to let us get the pointer's zoom position only when actually
+// used, while only calling the underlying function once per GUI
+// callback if it happens to be used more than once
+// the variable passed as zoom_x must be initialized to FLT_MAX as
+// a signal that the zoom values are not yet valid and need to be computed
+static void _get_zoom_pos(dt_dev_viewport_t *port,
+                          const double x,
+                          const double y,
+                          float *zoom_x,
+                          float *zoom_y,
+                          float *zoom_scale)
+{
+  if(*zoom_x == FLT_MAX)
+  {
+    dt_dev_get_pointer_zoom_pos(port, x, y, zoom_x, zoom_y, zoom_scale);
+  }
+}
 
 void init(dt_view_t *self)
 {
@@ -465,9 +482,6 @@ void expose(dt_view_t *self,
     dev->gui_synch = FALSE;
   }
 
-  float pzx = 0.0f, pzy = 0.0f, zoom_scale = 0.0f;
-  dt_dev_get_pointer_zoom_pos(port, pointerx, pointery, &pzx, &pzy, &zoom_scale);
-
   // adjust scroll bars
   float zoom_x, zoom_y, boxw, boxh;
   if(!dt_dev_get_zoom_bounds(port, &zoom_x, &zoom_y, &boxw, &boxh))
@@ -632,6 +646,9 @@ void expose(dt_view_t *self,
 
   cairo_save(cri);
 
+  float pzx = FLT_MAX, pzy = 0.0f;
+  float zoom_scale = dt_dev_get_zoom_scale(&dev->full, port->zoom, 1 << port->closeup, 1);
+
   // don't draw guides and color pickers on image margins
   cairo_rectangle(cri, tb, tb, width - 2.0 * tb, height - 2.0 * tb);
   cairo_clip(cri);
@@ -685,6 +702,7 @@ void expose(dt_view_t *self,
         "expose masks",
          port->pipe, dev->gui_module, DT_DEVICE_NONE, NULL, NULL, "%dx%d, px=%d py=%d",
          width, height, pointerx, pointery);
+    _get_zoom_pos(&dev->full, pointerx, pointery, &pzx, &pzy, &zoom_scale);
     dt_masks_events_post_expose(dmod, cri, width, height, pzx, pzy, zoom_scale);
   }
 
@@ -694,6 +712,7 @@ void expose(dt_view_t *self,
          || dmod == dev->proxy.rotate))
   {
     // reminder, we want this to be exposed always for guidings
+    _get_zoom_pos(&dev->full, pointerx, pointery, &pzx, &pzy, &zoom_scale);
     _module_gui_post_expose(dev->proxy.rotate, cri, wd, ht, pzx, pzy, zoom_scale);
   }
   else
@@ -713,6 +732,7 @@ void expose(dt_view_t *self,
                       port->pipe, dev->cropping.exposer,
                       DT_DEVICE_NONE, NULL, NULL, "%dx%d, px=%d py=%d",
                       width, height, pointerx, pointery);
+        _get_zoom_pos(&dev->full, pointerx, pointery, &pzx, &pzy, &zoom_scale);
         _module_gui_post_expose(dev->cropping.exposer, cri, wd, ht, pzx, pzy, zoom_scale);
         guides = FALSE;
       }
@@ -726,6 +746,7 @@ void expose(dt_view_t *self,
                       DT_DEVICE_NONE, NULL, NULL,
                       "%dx%d, px=%d py=%d",
                       width, height, pointerx, pointery);
+        _get_zoom_pos(&dev->full, pointerx, pointery, &pzx, &pzy, &zoom_scale);
         _module_gui_post_expose(dmod, cri, wd, ht, pzx, pzy, zoom_scale);
 
         // avoid drawing later if we just did via post_expose
@@ -2996,8 +3017,7 @@ void mouse_moved(dt_view_t *self, double x, double y, double pressure, int which
   dt_control_t *ctl = darktable.control;
   int handled = 0;
 
-  float zoom_x, zoom_y, zoom_scale;
-  dt_dev_get_pointer_zoom_pos(&dev->full, x, y, &zoom_x, &zoom_y, &zoom_scale);
+  float zoom_x = FLT_MAX, zoom_y, zoom_scale;
 
   if(!darktable.develop->darkroom_skip_mouse_events
      && dt_iop_color_picker_is_visible(dev)
@@ -3009,6 +3029,7 @@ void mouse_moved(dt_view_t *self, double x, double y, double pressure, int which
     float delta_x = 1.0f / (float) dev->full.pipe->processed_width;
     float delta_y = 1.0f / (float) dev->full.pipe->processed_height;
 
+    _get_zoom_pos(&dev->full, x, y, &zoom_x, &zoom_y, &zoom_scale);
     dt_boundingbox_t pbox = { zoom_x, zoom_y };
 
     if(sample->size == DT_LIB_COLORPICKER_SIZE_BOX)
@@ -3036,7 +3057,10 @@ void mouse_moved(dt_view_t *self, double x, double y, double pressure, int which
      && !handled
      && !darktable.develop->darkroom_skip_mouse_events
      && !dt_iop_color_picker_is_visible(dev))
+  {
+    _get_zoom_pos(&dev->full, x, y, &zoom_x, &zoom_y, &zoom_scale);
     handled = dt_masks_events_mouse_moved(dev->gui_module, zoom_x, zoom_y, pressure, which, zoom_scale);
+  }
 
   // module
   if(dev->gui_module && dev->gui_module->mouse_moved
@@ -3044,7 +3068,10 @@ void mouse_moved(dt_view_t *self, double x, double y, double pressure, int which
      && !darktable.develop->darkroom_skip_mouse_events
      && !dt_iop_color_picker_is_visible(dev)
      && dt_dev_modulegroups_test_activated(darktable.develop))
+  {
+    _get_zoom_pos(&dev->full, x, y, &zoom_x, &zoom_y, &zoom_scale);
     handled = dev->gui_module->mouse_moved(dev->gui_module, zoom_x, zoom_y, pressure, which, zoom_scale);
+  }
 
   if(ctl->button_down && ctl->button_down_which == 1)
   {
@@ -3066,6 +3093,7 @@ void mouse_moved(dt_view_t *self, double x, double y, double pressure, int which
           && darktable.control->button_down_which == 3
           && dev->proxy.rotate)
   {
+    _get_zoom_pos(&dev->full, x, y, &zoom_x, &zoom_y, &zoom_scale);
     dev->proxy.rotate->mouse_moved(dev->proxy.rotate, zoom_x, zoom_y, pressure, which, zoom_scale);
   }
 }
@@ -3074,9 +3102,6 @@ void mouse_moved(dt_view_t *self, double x, double y, double pressure, int which
 int button_released(dt_view_t *self, double x, double y, int which, uint32_t state)
 {
   dt_develop_t *dev = darktable.develop;
-
-  float zoom_x, zoom_y, zoom_scale;
-  dt_dev_get_pointer_zoom_pos(&dev->full, x, y, &zoom_x, &zoom_y, &zoom_scale);
 
   if(darktable.develop->darkroom_skip_mouse_events && which == 1)
   {
@@ -3097,19 +3122,29 @@ int button_released(dt_view_t *self, double x, double y, int which, uint32_t sta
     return 1;
   }
 
+  float zoom_x = FLT_MAX, zoom_y, zoom_scale;
   // rotate
   if(which == 3 && dev->proxy.rotate)
+  {
+    _get_zoom_pos(&dev->full, x, y, &zoom_x, &zoom_y, &zoom_scale);
     handled = dev->proxy.rotate->button_released(dev->proxy.rotate, zoom_x, zoom_y, which, state, zoom_scale);
-  if(handled) return handled;
+    if(handled) return handled;
+  }
   // masks
   if(dev->form_visible)
+  {
+    _get_zoom_pos(&dev->full, x, y, &zoom_x, &zoom_y, &zoom_scale);
     handled = dt_masks_events_button_released(dev->gui_module, zoom_x, zoom_y, which, state, zoom_scale);
-  if(handled) return handled;
+    if(handled) return handled;
+  }
   // module
   if(dev->gui_module && dev->gui_module->button_released
      && dt_dev_modulegroups_test_activated(darktable.develop))
+  {
+    _get_zoom_pos(&dev->full, x, y, &zoom_x, &zoom_y, &zoom_scale);
     handled = dev->gui_module->button_released(dev->gui_module, zoom_x, zoom_y, which, state, zoom_scale);
-  if(handled) return handled;
+    if(handled) return handled;
+  }
   if(which == 1) dt_control_change_cursor(GDK_LEFT_PTR);
 
   return 1;
@@ -3127,8 +3162,7 @@ int button_pressed(dt_view_t *self,
   dt_develop_t *dev = self->data;
   dt_colorpicker_sample_t *const sample = darktable.lib->proxy.colorpicker.primary_sample;
 
-  float zoom_x, zoom_y, zoom_scale;
-  dt_dev_get_pointer_zoom_pos(&dev->full, x, y, &zoom_x, &zoom_y, &zoom_scale);
+  float zoom_x = FLT_MAX, zoom_y, zoom_scale;
 
   if(darktable.develop->darkroom_skip_mouse_events)
   {
@@ -3139,7 +3173,11 @@ int button_pressed(dt_view_t *self,
       return 1;
     }
     else if(which == 3 && dev->proxy.rotate)
-      return dev->proxy.rotate->button_pressed(dev->proxy.rotate, zoom_x, zoom_y, pressure, which, type, state, zoom_scale);
+    {
+      _get_zoom_pos(&dev->full, x, y, &zoom_x, &zoom_y, &zoom_scale);
+      return dev->proxy.rotate->button_pressed(dev->proxy.rotate, zoom_x, zoom_y, pressure,
+                                               which, type, state, zoom_scale);
+    }
   }
 
   int handled = 0;
@@ -3150,6 +3188,7 @@ int button_pressed(dt_view_t *self,
 
     if(which == 1)
     {
+      _get_zoom_pos(&dev->full, x, y, &zoom_x, &zoom_y, &zoom_scale);
       sample->point[0] = zoom_x;
       sample->point[1] = zoom_y;
 
@@ -3195,6 +3234,7 @@ int button_pressed(dt_view_t *self,
       dt_iop_color_picker_t *picker = darktable.lib->proxy.colorpicker.picker_proxy;
       if(darktable.lib->proxy.colorpicker.display_samples)
       {
+        _get_zoom_pos(&dev->full, x, y, &zoom_x, &zoom_y, &zoom_scale);
         for(GSList *samples = darktable.lib->proxy.colorpicker.live_samples; samples; samples = g_slist_next(samples))
         {
           dt_colorpicker_sample_t *live_sample = samples->data;
@@ -3245,13 +3285,19 @@ int button_pressed(dt_view_t *self,
 
   // masks
   if(dev->form_visible)
+  {
+    _get_zoom_pos(&dev->full, x, y, &zoom_x, &zoom_y, &zoom_scale);
     handled = dt_masks_events_button_pressed(dev->gui_module, zoom_x, zoom_y, pressure, which, type, state);
-  if(handled) return handled;
+    if(handled) return handled;
+  }
   // module
   if(dev->gui_module && dev->gui_module->button_pressed
      && dt_dev_modulegroups_test_activated(darktable.develop))
+  {
+    _get_zoom_pos(&dev->full, x, y, &zoom_x, &zoom_y, &zoom_scale);
     handled = dev->gui_module->button_pressed(dev->gui_module, zoom_x, zoom_y, pressure, which, type, state, zoom_scale);
-  if(handled) return handled;
+    if(handled) return handled;
+  }
 
   if(which == 1 && type == GDK_2BUTTON_PRESS) return 0;
   if(which == 1)
@@ -3263,8 +3309,10 @@ int button_pressed(dt_view_t *self,
   if(which == 2  && type == GDK_BUTTON_PRESS) // Middle mouse button
     dt_dev_zoom_move(&dev->full, DT_ZOOM_1, 0.0f, -2, x, y, !dt_modifier_is(state, GDK_CONTROL_MASK));
   if(which == 3 && dev->proxy.rotate)
+  {
+    _get_zoom_pos(&dev->full, x, y, &zoom_x, &zoom_y, &zoom_scale);
     return dev->proxy.rotate->button_pressed(dev->proxy.rotate, zoom_x, zoom_y, pressure, which, type, state, zoom_scale);
-
+  }
   return 0;
 }
 
@@ -3277,24 +3325,28 @@ void scrolled(dt_view_t *self, double x, double y, int up, int state)
 {
   dt_develop_t *dev = self->data;
 
-  float zoom_x, zoom_y, zoom_scale;
-  dt_dev_get_pointer_zoom_pos(&dev->full, x, y, &zoom_x, &zoom_y, &zoom_scale);
-
+  float zoom_x = FLT_MAX, zoom_y, zoom_scale;
   int handled = 0;
 
   // masks
   if(dev->form_visible
      && !darktable.develop->darkroom_skip_mouse_events)
+  {
+    _get_zoom_pos(&dev->full, x, y, &zoom_x, &zoom_y, &zoom_scale);
     handled = dt_masks_events_mouse_scrolled(dev->gui_module, zoom_x, zoom_y, up, state);
-  if(handled) return;
+    if(handled) return;
+  }
 
   // module
   if(dev->gui_module && dev->gui_module->scrolled
      && !darktable.develop->darkroom_skip_mouse_events
      && !dt_iop_color_picker_is_visible(dev)
      && dt_dev_modulegroups_test_activated(darktable.develop))
+  {
+    _get_zoom_pos(&dev->full, x, y, &zoom_x, &zoom_y, &zoom_scale);
     handled = dev->gui_module->scrolled(dev->gui_module, zoom_x, zoom_y, up, state);
-  if(handled) return;
+    if(handled) return;
+  }
 
   // free zoom
   const gboolean constrained = !dt_modifier_is(state, GDK_CONTROL_MASK);
